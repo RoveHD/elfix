@@ -7,6 +7,7 @@
   <title>ELFIX · Anbieterseite</title>
   <style>
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     html, body { margin: 0; background: #0b111a; color: #c2cfdf; font: 13px 'Segoe UI', sans-serif; }
     header { height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 14px 0 18px; border-bottom: 1px solid #2d3b4d; }
     .marke { color: #f2f6fc; font-size: 13px; font-weight: 700; letter-spacing: 2px; }
@@ -15,11 +16,33 @@
     button:hover { background: #2d4661; border-color: #85a5cd; }
     button:focus-visible { outline: 2px solid #b9d8ff; outline-offset: 2px; }
     button span { font-size: 20px; line-height: 1; }
+    main { min-height: calc(100vh - 52px); display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 32px; gap: 20px; text-align: center; }
+    h1 { margin: 0; color: #eef4fc; font-size: 20px; font-weight: 600; }
+    p { margin: 0; max-width: 330px; color: #9aabc1; font-size: 13px; line-height: 1.6; }
+    .ladeleiste { width: min(300px, 100%); height: 4px; overflow: hidden; border-radius: 4px; background: #223245; }
+    .ladeleiste::after { content: ''; display: block; width: 38%; height: 100%; border-radius: inherit; background: #a4c7ef; animation: laden 1.35s ease-in-out infinite; }
+    @keyframes laden { from { transform: translateX(-100%); } to { transform: translateX(365%); } }
+    @media (prefers-reduced-motion: reduce) { .ladeleiste::after { animation: none; margin-left: 31%; } }
     @media (max-width: 700px) { .seite { display: none; } }
   </style>
 </head>
-<body>
+<body data-phase="warten">
   <header><div><span class="marke">ELFIX</span><span class="seite">Anbieterseite</span></div><button id="zurueckZumPlayer" type="button"><span aria-hidden="true">←</span>Zurück zum Player</button></header>
-  <script>document.getElementById('zurueckZumPlayer').addEventListener('click', () => window.close());</script>
+  <main id="anbieterStatus" role="status" aria-live="polite" aria-busy="true">
+    <h1 id="anbieterStatusTitel">Bestätigung wird vorbereitet …</h1>
+    <div class="ladeleiste" role="progressbar" aria-label="Wird geladen"></div>
+    <p id="anbieterStatusHinweis">Du kannst jederzeit zum Player zurückkehren.</p>
+    <button id="anbieterDialogAnzeigen" type="button" hidden>Bestätigung anzeigen</button>
+  </main>
+  <script>
+    globalThis.anbieterStatusSetzen = (phase, dialogVorhanden) => {
+      document.body.dataset.phase = phase;
+      document.getElementById('anbieterStatus').hidden = phase === 'dialog';
+      document.getElementById('anbieterStatusTitel').textContent = phase === 'laden' ? 'Video wird geladen …' : 'Bestätigung wird vorbereitet …';
+      document.getElementById('anbieterDialogAnzeigen').hidden = phase !== 'laden' || !dialogVorhanden;
+    };
+    document.getElementById('zurueckZumPlayer').addEventListener('click', () => window.close());
+    document.getElementById('anbieterDialogAnzeigen').addEventListener('click', () => console.log('__elfix:anbieter:dialog-zeigen'));
+  </script>
 </body>
 </html>

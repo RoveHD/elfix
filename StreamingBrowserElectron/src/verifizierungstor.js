@@ -112,16 +112,55 @@ function dialogMaskeScript(klickKennung = "") {
     const kenn = 'data-elfix-anbieterdialog';
     document.getElementById('__elfixAnbieterMaske')?.remove();
     document.querySelectorAll('[' + kenn + ']').forEach(el => el.removeAttribute(kenn));
-    const tore = (${toreLesen.toString()})();
-    const tor = tore.find(t => t.blockierend);
-    if (!tor) { globalThis.__elfixAnbieterDialog = null; return false; }
-    let kasten = tor.kasten;
-    const weiter = el => Array.from(el.querySelectorAll('button,a,input[type="submit"],input[type="button"]'))
-      .some(knopf => /^(weiter|continue)(?:\\b|$)/i.test(String(knopf.innerText || knopf.value || '').trim()));
-    for (let el = kasten; el && el !== document.body; el = el.parentElement) {
+    const sichtbar = el => {
+      if (!el?.isConnected) return false;
       const r = el.getBoundingClientRect();
-      if (el.matches('dialog,[role="dialog"],.modal-content,.modal-dialog')
-        || (weiter(el) && r.width < innerWidth * .96 && r.height < innerHeight * .96)) { kasten = el; break; }
+      if (r.width <= 0 || r.height <= 0) return false;
+      for (let p = el; p; p = p.parentElement) {
+        const s = getComputedStyle(p);
+        if (s.display === 'none' || s.visibility === 'hidden' || Number(s.opacity) === 0) return false;
+      }
+      return true;
+    };
+    const vorbereitet = el => /(?:video|stream) wird vorbereitet|preparing (?:your )?(?:video|stream)/i.test(String(el.innerText || el.textContent || ''));
+    const weiter = el => Array.from(el.querySelectorAll('button,a,input[type="submit"],input[type="button"]'))
+      .some(knopf => sichtbar(knopf) && /^(weiter|continue)(?:\\b|$)/i.test(String(knopf.innerText || knopf.value || '').trim()));
+    const begrenzt = el => {
+      const r = el.getBoundingClientRect();
+      return el !== document.body && el !== document.documentElement && r.width > 0 && r.height > 0
+        && r.width <= 900 && r.height <= Math.max(900, innerHeight)
+        && (r.width < innerWidth * .96 || r.height < innerHeight * .8);
+    };
+    const dialogKontext = el => {
+      if (el.matches('main,article,nav,aside,header,footer')) return false;
+      if (el.closest('dialog,[role="dialog"],.modal,.modal-content,#playerPrepareModal')) return true;
+      for (let p = el; p && p !== document.body; p = p.parentElement) {
+        if (['fixed','absolute'].includes(getComputedStyle(p).position)) return true;
+      }
+      return false;
+    };
+    // S.to setzt Turnstile/Altcha in einen neutralen Container (ggf. ShadowDOM).
+    // Der echte Titel und Weiter liegen trotzdem im originalen modal-content.
+    let kasten = Array.from(document.querySelectorAll('.modal-content,dialog,[role="dialog"]'))
+      .filter(el => sichtbar(el) && begrenzt(el) && vorbereitet(el) && weiter(el))
+      .sort((a,b) => a.getBoundingClientRect().width*a.getBoundingClientRect().height-b.getBoundingClientRect().width*b.getBoundingClientRect().height)[0];
+    if (!kasten) {
+      for (const titel of document.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"],.modal-title')) {
+        if (!sichtbar(titel) || !vorbereitet(titel)) continue;
+        for (let el = titel.parentElement; el && el !== document.body; el = el.parentElement) {
+          if (sichtbar(el) && begrenzt(el) && dialogKontext(el) && weiter(el)) { kasten = el; break; }
+        }
+        if (kasten) break;
+      }
+    }
+    if (!kasten) {
+      const tore = (${toreLesen.toString()})();
+      const tor = tore.find(t => t.blockierend && begrenzt(t.kasten));
+      kasten = tor?.kasten;
+    }
+    if (!kasten) { globalThis.__elfixAnbieterDialog = null; return false; }
+    for (let el = kasten; el && el !== document.body; el = el.parentElement) {
+      if (begrenzt(el) && weiter(el) && el.matches('dialog,[role="dialog"],.modal-content')) { kasten = el; break; }
     }
     const r = kasten.getBoundingClientRect();
     if (r.width <= 0 || r.height <= 0) return false;
@@ -145,7 +184,13 @@ function dialogMaskeScript(klickKennung = "") {
       + '[' + kenn + ']{max-width:calc(100vw - 24px)!important;max-height:calc(100vh - 24px)!important;overflow:auto!important}';
     (document.head || document.documentElement).appendChild(stil);
     const neu = kasten.getBoundingClientRect();
-    return { left: neu.left, top: neu.top, width: neu.width, height: neu.height, weiter: weiter(kasten) };
+    const fehler = kasten.querySelector('#player-prepare-error,[role="alert"],.alert-danger');
+    const pruefung = Array.from(kasten.querySelectorAll('#player-prepare-turnstile,#player-prepare-altcha,.cf-turnstile,.h-captcha,.g-recaptcha'))
+      .filter(el => { const s=getComputedStyle(el);return s.display!=='none'&&s.visibility!=='hidden'; }).map(el => el.id || el.className).join('|');
+    return { left: neu.left, top: neu.top, width: neu.width, height: neu.height, weiter: weiter(kasten),
+      viewportWidth: innerWidth, viewportHeight: innerHeight,
+      fehler: fehler && getComputedStyle(fehler).display !== 'none' ? String(fehler.innerText || fehler.textContent || '').trim() : '',
+      pruefung };
   })()`;
 }
 

@@ -2,7 +2,7 @@
 
 // Eine echte, isolierte Browserseite. Sie besitzt weder den Player noch dessen
 // Navigation; nur die Cookie-Sitzung wird mit der Anbieter-Werkbank geteilt.
-function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScript, maskeScript, persistieren, verbinden = () => {} }) {
+function erstellen({ BrowserWindow, WebContentsView, View = require("electron").View, eltern, sitzung, zustandScript, maskeScript, persistieren, verbinden = () => {} }) {
   let offen = null;
   const istHttp = url => /^https?:$/.test((() => { try { return new URL(url).protocol; } catch { return ""; } })());
   function oeffnen(provider, url, { signal, pruefen, erlaubt = istHttp, quelleVorbereiten, quelleUebernehmen } = {}) {
@@ -18,10 +18,12 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
     const parent = eltern();
     if (!parent || parent.isDestroyed() || !sitzung() || !istHttp(url)) return Promise.resolve("fehlgeschlagen");
     let fenster;
+    const [breite, hoehe] = parent.getContentSize();
     try {
-      const [breite, hoehe] = parent.getContentSize();
       fenster = new BrowserWindow({ parent, modal: true, show: false,
-        width: Math.max(640, breite), height: Math.max(480, hoehe),
+        backgroundColor: "#0b111a",
+        width: maskeScript ? Math.min(560, breite) : Math.max(640, breite),
+        height: maskeScript ? Math.min(440, hoehe) : Math.max(480, hoehe), useContentSize: Boolean(maskeScript),
         title: `${provider.name || "Anbieter"} · Cloudflare bestätigen`, autoHideMenuBar: true,
         webPreferences: { sandbox: true, contextIsolation: true,
           nodeIntegration: false, webviewTag: false, webSecurity: true, backgroundThrottling: false }
@@ -33,10 +35,42 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
       sandbox: true, contextIsolation: true, nodeIntegration: false,
       webviewTag: false, webSecurity: true, backgroundThrottling: false } });
     const inhalt = view.webContents;
-    fenster.contentView.addChildView(view);
+    const bereich = maskeScript ? new View() : null;
+    if (bereich) {
+      bereich.setBackgroundColor("#0b111a");
+      bereich.addChildView(view);
+    } else fenster.contentView.addChildView(view);
+    let ausschnitt = null;
+    let dialogAngehaengt = !bereich;
+    let phase = maskeScript ? "warten" : "dialog";
+    let lokaleSeiteBereit = false;
+    let letzterLokalerStand = "";
+    let manuellZeigen = false;
+    let weiterStand = null;
+    const lokalerStand = () => {
+      if (lokaleSeiteBereit && !fenster.isDestroyed()) {
+        const stand = phase + "|" + Boolean(ausschnitt);
+        if (stand === letzterLokalerStand) return;
+        letzterLokalerStand = stand;
+        fenster.webContents.executeJavaScript(`globalThis.anbieterStatusSetzen?.(${JSON.stringify(phase)},${Boolean(ausschnitt)})`).catch(() => {});
+      }
+    };
+    const anzeigen = neuePhase => {
+      phase = neuePhase;
+      if (bereich) {
+        if (phase === "dialog" && !dialogAngehaengt) { fenster.contentView.addChildView(bereich); dialogAngehaengt = true; }
+        else if (phase !== "dialog" && dialogAngehaengt) { fenster.contentView.removeChildView(bereich); dialogAngehaengt = false; }
+      }
+      lokalerStand();
+    };
     const anordnen = () => {
       const [width, height] = fenster.getContentSize();
-      view.setBounds({ x: 0, y: 52, width, height: Math.max(1, height - 52) });
+      if (bereich) {
+        bereich.setBounds({ x: 0, y: 52, width, height: Math.max(1, height - 52) });
+        const links = ausschnitt ? Math.max(0, Math.floor(ausschnitt.left) - 12) : 0;
+        const oben = ausschnitt ? Math.max(0, Math.floor(ausschnitt.top) - 12) : 0;
+        view.setBounds({ x: -links, y: -oben, width: breite, height: Math.max(1, hoehe - 52) });
+      } else view.setBounds({ x: 0, y: 52, width, height: Math.max(1, height - 52) });
     };
     anordnen();
     fenster.on("resize", anordnen);
@@ -72,9 +106,30 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
     const gueltig = () => offen === eintrag && !fenster.isDestroyed() && !abbruch.signal.aborted && !signal?.aborted;
     const maskieren = async () => {
       if (!maskeScript || !gueltig() || !bereit) return;
-      await inhalt.executeJavaScriptInIsolatedWorld(987, [{ code: maskeScript(klickKennung) }]).catch(() => false);
-      // Die View bleibt eingehangen. Wiederholtes setVisible(true) kann unter
-      // Windows den Eingabefokus waehrend einer Benutzeraktion erneuern.
+      const stand = generation;
+      const masse = await inhalt.executeJavaScriptInIsolatedWorld(987, [{ code: maskeScript(klickKennung) }]).catch(() => false);
+      if (!gueltig() || stand !== generation || !bereit) return;
+      if (masse && [masse.left, masse.top, masse.width, masse.height].every(Number.isFinite) && masse.width > 0 && masse.height > 0) {
+        const vorher = ausschnitt;
+        ausschnitt = masse;
+        const erneutePruefung = weiterStand && masse.pruefung && masse.pruefung !== weiterStand.pruefung;
+        if (weiterAm && (masse.fehler || erneutePruefung)) { weiterAm = 0; weiterStand = null; }
+        if (!weiterAm || masse.fehler || erneutePruefung || manuellZeigen) {
+          const neuBreite = Math.ceil(masse.width) + 24;
+          const neuHoehe = Math.ceil(masse.height) + 24 + 52;
+          if (!vorher || Math.abs(vorher.width - masse.width) > 1 || Math.abs(vorher.height - masse.height) > 1) {
+            fenster.setMinimumSize(0, 0);
+            fenster.setContentSize(neuBreite, neuHoehe);
+            const [gesamtBreite, gesamtHoehe] = fenster.getSize();
+            fenster.setMinimumSize(neuBreite + gesamtBreite - fenster.getContentSize()[0], neuHoehe + gesamtHoehe - fenster.getContentSize()[1]);
+          }
+          anzeigen("dialog");
+        } else anzeigen("laden");
+        anordnen();
+      } else {
+        ausschnitt = null;
+        anzeigen(weiterAm ? "laden" : "warten");
+      }
     };
     fenster.on("resize", () => { void maskieren(); });
     inhalt.on("console-message", (_event, ...args) => {
@@ -82,7 +137,20 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
       const meldung = details?.message ?? args[1];
       if (typeof meldung === "string" && meldung.startsWith(klickKennung + ":")) {
         const zeit = Number(meldung.slice(klickKennung.length + 1));
-        if (Number.isFinite(zeit) && zeit > 0 && zeit <= Date.now() + 1000) weiterAm = zeit;
+        if (Number.isFinite(zeit) && zeit > 0 && zeit <= Date.now() + 1000) {
+          weiterAm = zeit;
+          weiterStand = ausschnitt;
+          manuellZeigen = false;
+          if (maskeScript) anzeigen("laden");
+        }
+      }
+    });
+    fenster.webContents.on("console-message", (_event, ...args) => {
+      const details = [_event, ...args].find(wert => typeof wert?.message === "string");
+      if ((details?.message ?? args[1]) === "__elfix:anbieter:dialog-zeigen" && ausschnitt && gueltig()) {
+        manuellZeigen = true;
+        anzeigen("dialog");
+        anordnen();
       }
     });
     const pruefe = async () => {
@@ -144,7 +212,10 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
     inhalt.on("before-input-event", taste);
     fenster.webContents.on("before-input-event", taste);
     inhalt.on("did-start-navigation", (_event, _url, inPlace, hauptrahmen) => {
-      if (hauptrahmen && !inPlace) { generation++; bereit = false; }
+      if (hauptrahmen && !inPlace) {
+        generation++; bereit = false;
+        if (maskeScript) { ausschnitt = null; anzeigen(weiterAm ? "laden" : "warten"); }
+      }
     });
     inhalt.on("dom-ready", () => { bereit = true; void pruefe(); });
     inhalt.on("did-fail-load", (_event, code, _text, _url, hauptrahmen) => {
@@ -169,7 +240,7 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
     if (!parent.isVisible()) parent.show();
     fenster.show();
     fenster.focus();
-    fenster.webContents.loadFile(lokaleDatei).catch(() => {
+    fenster.webContents.loadFile(lokaleDatei).then(() => { lokaleSeiteBereit = true; lokalerStand(); }).catch(() => {
       if (gueltig()) { ergebnis = "fehlgeschlagen"; schliessen(); }
     });
     inhalt.loadURL(url).catch(error => {
