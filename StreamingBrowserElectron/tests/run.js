@@ -24,6 +24,7 @@ const OHNE_RELAY = ["kalendertest", "datumtest", "standtest", "fortschritttest",
 // Mit Relay: das Zusammenspiel.
 OHNE_RELAY.push("watchpartyvorbereitungtest");
 OHNE_RELAY.push("anbieteransichttest");
+OHNE_RELAY.push("anbieterquellentest");
 OHNE_RELAY.push("stofortschritttest");
 OHNE_RELAY.push("cf-sessiontest");
 OHNE_RELAY.push("cf-flowtest");

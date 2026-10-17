@@ -199,6 +199,11 @@ function buehne(antwort, cloudflare = "bestaetigt", route = "search") {
   pruefe("Schliessen ist weder eine Bestaetigung noch ein Fehler",
     geschlossen.gerufen.suchen.length === 0
     && JSON.stringify(geschlossen.gerufen.toasts) === '["S.to wird geöffnet …"]');
+  const uebernommen = buehne("cloudflare", "uebernommen");
+  await (await uebernommen.karte(1)).ausloesen("contextmenu");
+  pruefe("Die uebernommene Videoquelle startet weder eine Suche noch eine Fehlermeldung",
+    uebernommen.gerufen.suchen.length === 0
+    && JSON.stringify(uebernommen.gerufen.toasts) === '["S.to wird geöffnet …"]');
   const cr = buehne("cloudflare", "bestaetigt", "start");
   await (await cr.karte(1)).ausloesen("contextmenu");
   pruefe("Ausserhalb der Suche springt man nicht in die Suche", cr.gerufen.suchen.length === 0);

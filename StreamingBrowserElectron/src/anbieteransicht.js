@@ -2,10 +2,10 @@
 
 // Eine echte, isolierte Browserseite. Sie besitzt weder den Player noch dessen
 // Navigation; nur die Cookie-Sitzung wird mit der Anbieter-Werkbank geteilt.
-function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScript, persistieren, verbinden = () => {} }) {
+function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScript, maskeScript, persistieren, verbinden = () => {} }) {
   let offen = null;
   const istHttp = url => /^https?:$/.test((() => { try { return new URL(url).protocol; } catch { return ""; } })());
-  function oeffnen(provider, url, { signal, pruefen, erlaubt = istHttp } = {}) {
+  function oeffnen(provider, url, { signal, pruefen, erlaubt = istHttp, quelleVorbereiten, quelleUebernehmen } = {}) {
     if (signal?.aborted) return Promise.resolve("geschlossen");
     if (offen && !offen.fenster.isDestroyed()) {
       if (offen.providerId === provider.id && offen.url === url) {
@@ -45,6 +45,7 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
     fenster.webContents.on("will-navigate", event => event.preventDefault());
     fenster.on("page-title-updated", event => event.preventDefault());
     verbinden(inhalt, provider);
+    const quellen = quelleVorbereiten?.(view);
     inhalt.setAudioMuted(true);
     inhalt.setWindowOpenHandler(() => ({ action: "deny" }));
     inhalt.on("will-prevent-unload", event => event.preventDefault());
@@ -57,7 +58,10 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
     let bereit = false;
     let probeGeneration = -1;
     let beschaeftigt = false;
+    let letzterQuellenFehler = "";
     const abbruch = new AbortController();
+    const klickKennung = "__elfixAnbieterWeiter:" + require("node:crypto").randomUUID();
+    let weiterAm = 0;
     let aufloesen;
     const fertig = new Promise(resolve => { aufloesen = resolve; });
     const eintrag = { fenster, providerId: provider.id, url, fertig,
@@ -66,13 +70,51 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
     const schliessen = () => eintrag.schliessen();
     signal?.addEventListener("abort", schliessen, { once: true });
     const gueltig = () => offen === eintrag && !fenster.isDestroyed() && !abbruch.signal.aborted && !signal?.aborted;
+    const maskieren = async () => {
+      if (!maskeScript || !gueltig() || !bereit) return;
+      await inhalt.executeJavaScriptInIsolatedWorld(987, [{ code: maskeScript(klickKennung) }]).catch(() => false);
+      // Die View bleibt eingehangen. Wiederholtes setVisible(true) kann unter
+      // Windows den Eingabefokus waehrend einer Benutzeraktion erneuern.
+    };
+    fenster.on("resize", () => { void maskieren(); });
+    inhalt.on("console-message", (_event, ...args) => {
+      const details = [_event, ...args].find(wert => typeof wert?.message === "string");
+      const meldung = details?.message ?? args[1];
+      if (typeof meldung === "string" && meldung.startsWith(klickKennung + ":")) {
+        const zeit = Number(meldung.slice(klickKennung.length + 1));
+        if (Number.isFinite(zeit) && zeit > 0 && zeit <= Date.now() + 1000) weiterAm = zeit;
+      }
+    });
     const pruefe = async () => {
       if (!gueltig() || !bereit || beschaeftigt) return;
       beschaeftigt = true;
       const stand = generation;
       try {
+        await maskieren();
+        if (!gueltig() || stand !== generation || !bereit) return;
         const lage = await inhalt.executeJavaScript(zustandScript());
         if (!gueltig() || stand !== generation || !bereit) return;
+        if (quellen) {
+          // Der Nutzer klickt selbst. Weder Token noch HTML-Freigabe ersetzen
+          // die gepruefte Quelle aus genau dieser Ansicht.
+          if (!weiterAm) return;
+          const quelle = await quellen.pruefen({ signal: abbruch.signal, seit: weiterAm });
+          if (!quelle?.ok || !gueltig() || generation !== stand) return;
+          const wechseln = herstellen => {
+            if (!gueltig()) return null;
+            signal?.removeEventListener("abort", schliessen);
+            signal = herstellen();
+            signal?.addEventListener("abort", schliessen, { once: true });
+            if (signal?.aborted) schliessen();
+            return signal;
+          };
+          if (!await quelleUebernehmen?.(quelle, { signal: abbruch.signal, wechseln }) || !gueltig()) return;
+          await persistieren(sitzung());
+          if (!gueltig()) return;
+          ergebnis = "uebernommen";
+          schliessen();
+          return;
+        }
         if (lage?.offen) { gesehen = true; probeGeneration = -1; return; }
         // Auch ein verschwundenes Widget oder ein Cookie allein beweist die
         // Freigabe nicht. Nur der geschuetzte Originalabruf ist der Beleg.
@@ -83,7 +125,15 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
         if (!gueltig() || generation !== stand) return;
         ergebnis = "bestaetigt";
         schliessen();
-      } catch { /* Eine laufende Navigation kann die DOM-Probe ersetzen. */ }
+      } catch (error) {
+        // Dokumentwechsel verwerfen ihre Probe. Echte Integrationsfehler im
+        // Quellenpfad bleiben erkennbar, ohne alle 400ms dasselbe zu loggen.
+        const meldung = String(error?.message || error);
+        if (quellen && gueltig() && stand === generation && bereit && meldung !== letzterQuellenFehler) {
+          letzterQuellenFehler = meldung;
+          console.warn("[ELFIX ANBIETER] Quellenuebernahme: " + meldung);
+        }
+      }
       finally { beschaeftigt = false; }
     };
     inhalt.on("will-navigate", (event, ziel) => { if (!istHttp(ziel) || !erlaubt(ziel)) event.preventDefault(); });
@@ -106,6 +156,7 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
     fenster.on("closed", () => {
       clearInterval(beobachter);
       abbruch.abort();
+      quellen?.schliessen();
       signal?.removeEventListener("abort", schliessen);
       if (offen === eintrag) offen = null;
       // flushStore sichert auch Cookies einer noch nicht abgeschlossenen
@@ -143,11 +194,11 @@ function fallbackErstellen({ setzen = setTimeout, loeschen = clearTimeout, oeffn
     versuch.signal.removeEventListener("abort", versuch.abbrechen);
     if (aktuell === versuch) aktuell = null;
   }
-  function starten({ provider, url, signal, gueltig = () => true, fortsetzen, unterdrueckt = false }) {
+  function starten({ provider, url, signal, gueltig = () => true, fortsetzen, unterdrueckt = false, optionen = {} }) {
     if (aktuell?.provider.id === provider.id && aktuell.url === url && aktuell.signal === signal) return aktuell;
     beenden(aktuell);
     if (signal.aborted) return null;
-    const versuch = { provider, url, signal, gueltig, fortsetzen, gezeigt: unterdrueckt,
+    const versuch = { provider, url, signal, gueltig, fortsetzen, optionen, gezeigt: unterdrueckt,
       fensterAbbruch: new AbortController() };
     versuch.abbrechen = () => beenden(versuch);
     signal.addEventListener("abort", versuch.abbrechen, { once: true });

@@ -69,6 +69,8 @@ const queueVorbereitungen = new Map();
 let queueYoutubeMitgliedschaft = "";
 const direktlauf = require("./direktlauf");
 const direktbeobachtung = require("./direktbeobachtung");
+const direktquelle = require("./direktquelle");
+const streamspur = require("./streamspur");
 // Die YouTube-Watchparty. Eigener Modus, eigene Sync-Logik - sie teilt sich mit
 // der Watchparty fuer Serien nur die Leitung.
 const { YoutubeWatchparty } = require("./youtube-watchparty");
@@ -341,6 +343,7 @@ let browserSession;
 const anbieterSeitenAnsicht = anbieteransicht.erstellen({ BrowserWindow, WebContentsView,
   eltern: () => mainWindow, sitzung: () => browserSession,
   zustandScript: () => verifizierungstor.zustandScript(), persistieren: cfSitzungPersistieren,
+  maskeScript: kennung => verifizierungstor.dialogMaskeScript(kennung),
   verbinden: (inhalt, provider) => {
     webContentsProvider.set(inhalt.id, provider.id);
     inhalt.once("destroyed", () => webContentsProvider.delete(inhalt.id));
@@ -9878,8 +9881,49 @@ function anbieterSeitenAdresse(provider) {
 async function anbieterSeiteOeffnen(provider, url, signal) {
   // Der manuelle Knopf hat Vorrang vor dem schmalen automatischen Tor.
   menschentorFenster?.abbrechen("anbieterseite");
+  const versuch = direktAnbieterFallback.aktuell;
+  const lauf = spielerLauf;
+  const quellenModus = Boolean(episodeIdentity(url) && (
+    (lauf?.providerId === provider.id && seiteGleich(lauf.url, url) && !lauf.quelle?.adresse)
+    || (versuch?.provider.id === provider.id && seiteGleich(versuch.url, url) && !versuch.signal.aborted)));
+  let auftragSignal = direktLaden.signal;
+  let quellenView = null;
+  const optionen = versuch?.optionen || {};
+  const aktuell = () => !auftragSignal.aborted && direktLaden.signal === auftragSignal
+    && spielerLauf === lauf && spielerLauf?.id === lauf?.id
+    && (!optionen.istAktuell || optionen.istAktuell())
+    && (!spielerLauf || (spielerLauf.providerId === provider.id && seiteGleich(spielerLauf.url, url) && !spielerLauf.quelle?.adresse));
   return anbieterSeitenAnsicht.oeffnen(provider, url, { signal,
-    erlaubt: ziel => !shouldBlockProviderNavigation(ziel, provider),
+    erlaubt: ziel => !shouldBlockProviderNavigation(ziel, provider)
+      && (!quellenModus || !episodeIdentity(ziel) || isExpectedEpisodePage(ziel, url)),
+    quelleVorbereiten: quellenModus ? view => { quellenView = view; return anbieterQuelleBeobachten(view, url); } : undefined,
+    quelleUebernehmen: async (ergebnis, uebergabe) => {
+      if (!aktuell() || uebergabe.signal.aborted) return false;
+      const bisher = spielerLauf;
+      const wahl = await anbieterHosterWahl(quellenView, ergebnis, bisher, optionen);
+      if (!wahl || !aktuell() || uebergabe.signal.aborted) return false;
+      const startzeit = sanitizePositiveNumber(spielerTakt.stelle || bisher?.startzeit || optionen.startzeit);
+      const rundeUebernehmen = Boolean(bisher?.rundeUebernehmen || (!bisher?.rundeWarten
+        && !optionen.rundeWarten && watchpartyLiveKeyForUrl(url) && watchpartyRaumForUrl(url)));
+      // Das Fenster folgt dem neuen Resolver-Signal. Der ersetzte Resolver
+      // wird abgebrochen, bevor er seine alte Quelle noch zurueckschreibt.
+      auftragSignal = uebergabe.wechseln(() => direktAuftragBeginnen());
+      if (!auftragSignal || auftragSignal.aborted || uebergabe.signal.aborted) return false;
+      const einbau = direktSpielerOeffnen(provider, url, { ...ergebnis,
+        ...wahl
+      }, { ...optionen, signal: AbortSignal.any([auftragSignal, uebergabe.signal]),
+        startzeit, auswahl: false, laden: false, vorladen: false,
+        fullscreen: Boolean(isContentFullscreen), rundeUebernehmen,
+        rundeWarten: Boolean(bisher?.rundeWarten || optionen.rundeWarten), istAktuell: aktuell });
+      const eigenerLauf = spielerLauf;
+      const offen = await einbau;
+      if (!offen || auftragSignal.aborted || uebergabe.signal.aborted || direktLaden.signal !== auftragSignal
+        || spielerLauf !== eigenerLauf || (optionen.istAktuell && !optionen.istAktuell())
+        || spielerLauf?.providerId !== provider.id || !seiteGleich(spielerLauf.url, url)
+        || spielerLauf.quelle?.adresse !== ergebnis.quelle.adresse) return false;
+      watchpartyZustandUebernehmen(url);
+      return true;
+    },
     pruefen: async (adresse, abbruch) => {
       try {
         const antwort = await anbieterAbruf(adresse, { headers: { accept: "text/html,application/xhtml+xml" },
@@ -9892,9 +9936,130 @@ async function anbieterSeiteOeffnen(provider, url, signal) {
   });
 }
 
+async function anbieterHosterWahl(view, ergebnis, lauf, optionen = {}) {
+  const liste = Array.isArray(lauf?.hosterliste) ? lauf.hosterliste : [];
+  const hosterPasst = eintrag => !ergebnis.hoster || !eintrag.hoster
+    || String(eintrag.hoster).toLowerCase() === String(ergebnis.hoster).toLowerCase();
+  const bekannteAdresse = optionen.hosterLink || optionen.hosterWahl?.adresse || lauf?.link;
+  const bekannt = liste.find(eintrag => eintrag.adresse === bekannteAdresse && hosterPasst(eintrag));
+  if (bekannt) return { link: bekannt.adresse, hoster: bekannt.hoster, hosterliste: liste };
+  // Sichtbare Sprache plus eindeutig zugeordneter Hoster, kein willkuerliches
+  // erstes Listenelement. Das bestehende Skript liest die Provider-Kacheln.
+  let frisch = [];
+  if (isLiveView(view)) {
+    try { frisch = JSON.parse(String(await view.webContents.executeJavaScript(direktlinks.hosterlinkScript()) || "[]")); }
+    catch { /* Ohne eindeutige Auswahl bleibt die freigegebene Ansicht offen. */ }
+  }
+  const belegt = new Set(ergebnis.anbieterLinks || []);
+  const adressen = [...frisch, ...liste].filter(eintrag => eintrag.adresse && belegt.has(eintrag.adresse));
+  const eindeutig = adressen.length ? adressen : frisch.filter(eintrag => eintrag.sichtbar && ergebnis.hoster && hosterPasst(eintrag));
+  const wahlen = [...new Map(eindeutig.map(eintrag => [eintrag.adresse, eintrag])).values()];
+  if (wahlen.length === 1) {
+    const wahl = wahlen[0];
+    const hosterliste = [...new Map([...liste, ...frisch, wahl].map(eintrag => [eintrag.adresse, eintrag])).values()];
+    return { link: wahl.adresse, hoster: wahl.hoster, hosterliste };
+  }
+  // Ohne vorhandene Fassungsauswahl wird keine Sprache erfunden.
+  return !liste.length && !frisch.length ? { link: ergebnis.link || "", hoster: ergebnis.hoster || "", hosterliste: [] } : null;
+}
+
+// Beobachtet dieselbe freigegebene Ansicht. Weder Weiter noch Play werden
+// hier ausgeloest; ein frisch eingesetzter Hoster-Iframe wird auch ohne
+// laufendes Video aus seinem eigenen DOM bzw. dem bestehenden Resolver gelesen.
+function anbieterQuelleBeobachten(view, episodeUrl) {
+  const inhalt = view.webContents;
+  const id = inhalt.id;
+  const netz = [];
+  let seit = 0;
+  let netzNummer = 0;
+  let belegteQuelle = null;
+  const geprueft = new Map();
+  const netzGelesen = new Set();
+  const rahmenGelesen = new Map();
+  const resolverGefragt = new Set();
+  direktBeobachter.set(id, eintrag => {
+    netz.push({ ...eintrag, zeit: Date.now(), nummer: ++netzNummer });
+    if (netz.length > 400) netz.shift();
+  });
+  return {
+    schliessen: () => direktBeobachter.delete(id),
+    pruefen: async ({ signal, seit: klickZeit }) => {
+      const seitePasst = () => !episodeIdentity(inhalt.getURL()) || isExpectedEpisodePage(inhalt.getURL(), episodeUrl);
+      if (signal.aborted || !isLiveView(view) || !seitePasst()) return null;
+      if (seit !== klickZeit) {
+        seit = klickZeit; geprueft.clear(); netzGelesen.clear(); rahmenGelesen.clear(); resolverGefragt.clear(); belegteQuelle = null;
+      }
+      if (belegteQuelle) return belegteQuelle;
+      const lagen = await executeJavaScriptInMediaFrames(view, `(() => {
+        const video = Array.from(document.querySelectorAll('video')).sort((a,b) => (b.duration||0)-(a.duration||0))[0];
+        return { seite: location.href, currentSrc: video?.currentSrc || '', dauer: Number(video?.duration)||0,
+          html: document.documentElement.outerHTML.slice(0, 4*1024*1024) };
+      })()`);
+      if (signal.aborted || !isLiveView(view) || !seitePasst()) return null;
+      const belegen = async (fund, dauer = 0, beleg = "") => {
+        const adresse = fund?.quelle?.adresse;
+        if (!providerModel.isHttpUrl(adresse)) return null;
+        const art = streamspur.art(adresse);
+        if (!["playlist", "datei"].includes(art) || (art === "playlist" && !/\.m3u8(?:[?#]|$)/i.test(adresse))) return null;
+        const kopfzeilen = fund.kopfzeilen || direktlauf.kopfzeilenFuer(fund.seite || episodeUrl, browserSession.getUserAgent());
+        const schluessel = adresse + "|" + kopfzeilen.referer;
+        const vorprobe = geprueft.get(schluessel);
+        if (vorprobe && (vorprobe.ergebnis || vorprobe.beleg === beleg)) return vorprobe.ergebnis;
+        let laenge = dauer;
+        if (art === "playlist") {
+          try { laenge = await direktbeobachtung.playlistPruefen((ziel, aufbau) => browserSession.fetch(ziel, aufbau), adresse, kopfzeilen, signal); }
+          catch { laenge = 0; }
+        } else if (dauer >= streamspur.MINDESTLAUFZEIT_S) {
+          const probe = await cfGeschuetzteAnfragePruefen({ url: adresse, expected: "mp4",
+            referer: kopfzeilen.referer, origin: kopfzeilen.origin }, signal);
+          if (!probe.ok) laenge = 0;
+        }
+        const wahl = streamspur.waehlen([{ adresse, art, laufzeit: laenge, vonWerbung: Boolean(fund.vonWerbung) }], { laufzeiten: { [adresse]: laenge } });
+        const ergebnis = !signal.aborted && seitePasst() && wahl.quelle && laenge >= streamspur.MINDESTLAUFZEIT_S
+          ? { ...fund, ok: true, quelle: { ...fund.quelle, typ: art === "playlist" ? "hls" : "datei" }, kopfzeilen,
+            anbieterLinks: netz.filter(eintrag => eintrag.zeit >= seit && !eintrag.vonWerbung).map(eintrag => eintrag.adresse) } : null;
+        geprueft.set(schluessel, { ergebnis, beleg });
+        return ergebnis;
+      };
+      const netzKandidaten = [...new Map(netz.filter(e => e.zeit >= seit && streamspur.art(e.adresse) === "playlist")
+        .map(e => [e.adresse + "|" + e.rahmen + "|" + Boolean(e.vonWerbung), e])).values()]
+        .sort((a, b) => b.nummer - a.nummer).filter(e => !netzGelesen.has(e.nummer)).slice(0, 12);
+      for (const eintrag of netzKandidaten) {
+        if (signal.aborted) return null;
+        netzGelesen.add(eintrag.nummer);
+        const fund = await belegen({ quelle: { adresse: eintrag.adresse, hoehe: 0 },
+          seite: eintrag.rahmen || inhalt.getURL(), link: eintrag.rahmen || "", vonWerbung: eintrag.vonWerbung }, 0, eintrag.nummer);
+        if (fund) { belegteQuelle = fund; return fund; }
+      }
+      for (const lage of lagen) {
+        if (signal.aborted) return null;
+        if (lage.currentSrc && lage.dauer >= streamspur.MINDESTLAUFZEIT_S) {
+          const fund = await belegen({ quelle: { adresse: lage.currentSrc, hoehe: 0 }, seite: lage.seite, link: lage.seite }, lage.dauer);
+          if (fund) { belegteQuelle = fund; return fund; }
+        }
+        if (!providerModel.isHttpUrl(lage.seite) || !isKnownVideoHosterUrl(lage.seite)
+          || rahmenGelesen.get(lage.seite) === lage.html) continue;
+        rahmenGelesen.set(lage.seite, lage.html);
+        const gelesen = direktquelle.aufloesen(lage.html || "", lage.seite);
+        let ergebnis = gelesen.quelle ? { ...gelesen, seite: lage.seite } : null;
+        if (!ergebnis && !resolverGefragt.has(lage.seite)) {
+          resolverGefragt.add(lage.seite);
+          ergebnis = await direktAufloeserHolen()?.aufloesen(lage.seite, episodeUrl, { signal });
+        }
+        if (signal.aborted) return null;
+        const fund = await belegen({ ...ergebnis, link: lage.seite,
+          hoster: /voe/i.test(providerModel.hostFromUrl(lage.seite)) ? "VOE" : "" }, lage.dauer, lage.html);
+        if (fund) { belegteQuelle = fund; return fund; }
+      }
+      return null;
+    }
+  };
+}
+
 function direktFallbackStarten(provider, url, signal, optionen = {}) {
   if (!isStoProviderLike(provider) || !episodeIdentity(url) || optionen.vorladen) return null;
   return direktAnbieterFallback.starten({ provider, url, signal,
+    optionen,
     unterdrueckt: Boolean(optionen.anbieterFortsetzung),
     gueltig: () => !signal.aborted && (!optionen.istAktuell || optionen.istAktuell()),
     fortsetzen: async () => {

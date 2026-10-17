@@ -104,4 +104,49 @@ function torScript(_maxKlicks = 4, beobachten = true) {
     + "return pruefen(); })()" : "");
 }
 
-module.exports = { TOR_MELDUNG, toreLesen, zustandScript, fensterScript, torScript };
+// Die interaktive Anbieteransicht behaelt den ganzen mittleren Dialog,
+// einschliesslich eines Weiter-Knopfs ausserhalb des eigentlichen Widgets.
+// Separat vom schmalen Resolver-Tor: dessen Geometrie bleibt unveraendert.
+function dialogMaskeScript(klickKennung = "") {
+  return `(() => {
+    const kenn = 'data-elfix-anbieterdialog';
+    document.getElementById('__elfixAnbieterMaske')?.remove();
+    document.querySelectorAll('[' + kenn + ']').forEach(el => el.removeAttribute(kenn));
+    const tore = (${toreLesen.toString()})();
+    const tor = tore.find(t => t.blockierend);
+    if (!tor) { globalThis.__elfixAnbieterDialog = null; return false; }
+    let kasten = tor.kasten;
+    const weiter = el => Array.from(el.querySelectorAll('button,a,input[type="submit"],input[type="button"]'))
+      .some(knopf => /^(weiter|continue)(?:\\b|$)/i.test(String(knopf.innerText || knopf.value || '').trim()));
+    for (let el = kasten; el && el !== document.body; el = el.parentElement) {
+      const r = el.getBoundingClientRect();
+      if (el.matches('dialog,[role="dialog"],.modal-content,.modal-dialog')
+        || (weiter(el) && r.width < innerWidth * .96 && r.height < innerHeight * .96)) { kasten = el; break; }
+    }
+    const r = kasten.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return false;
+    globalThis.__elfixAnbieterDialog = kasten;
+    if (!globalThis.__elfixAnbieterWeiterBeobachter) {
+      globalThis.__elfixAnbieterWeiterBeobachter = true;
+      document.addEventListener('click', event => {
+        const knopf = event.target?.closest?.('button,a,input[type="submit"],input[type="button"]');
+        if (event.isTrusted && knopf && globalThis.__elfixAnbieterDialog?.contains(knopf)
+          && /^(weiter|continue)(?:\\b|$)/i.test(String(knopf.innerText || knopf.value || '').trim())) {
+          console.log(${JSON.stringify(klickKennung)} + ':' + Date.now());
+        }
+      }, true);
+    }
+    kasten.setAttribute(kenn, '');
+    const stil = document.createElement('style'); stil.id = '__elfixAnbieterMaske';
+    stil.textContent = 'html,body{background:#0b111a!important;overflow:hidden!important}'
+      + 'body *{visibility:hidden!important}'
+      + 'body::before,body::after{visibility:hidden!important}'
+      + '[' + kenn + '],[' + kenn + '] *{visibility:visible!important}'
+      + '[' + kenn + ']{max-width:calc(100vw - 24px)!important;max-height:calc(100vh - 24px)!important;overflow:auto!important}';
+    (document.head || document.documentElement).appendChild(stil);
+    const neu = kasten.getBoundingClientRect();
+    return { left: neu.left, top: neu.top, width: neu.width, height: neu.height, weiter: weiter(kasten) };
+  })()`;
+}
+
+module.exports = { TOR_MELDUNG, toreLesen, zustandScript, fensterScript, torScript, dialogMaskeScript };

@@ -3039,7 +3039,7 @@ function sprachsucheEreignis(ereignis) {
 async function anbieterCloudflare(provider) {
   showToast(`${provider.name} wird geöffnet …`);
   const ergebnis = await api.providerCloudflare?.(provider.id).catch(() => "fehlgeschlagen");
-  if (ergebnis === "geschlossen") return;
+  if (ergebnis === "geschlossen" || ergebnis === "uebernommen") return;
   if (ergebnis === "bestaetigt") showToast(`${provider.name} bestätigt`);
   else {
     showToast(`${provider.name} konnte nicht geöffnet werden`);
