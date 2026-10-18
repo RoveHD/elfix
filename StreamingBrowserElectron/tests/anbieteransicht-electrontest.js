@@ -64,8 +64,15 @@ app.whenReady().then(async () => {
   player.webContents.on("did-start-navigation", () => geladen++);
   const decken = [];
   const seite = win => parent.contentView.children.find(view => view.webContents?.session === browserSession).webContents;
-  const seiteBereit = win => parent.contentView.children.some(view => view.webContents?.session === browserSession)
-    && seite(win).executeJavaScript("Boolean(window.__anbieterProben)");
+  const seiteBereit = async win => {
+    const inhalt = seite(win);
+    // executeJavaScript wartet selbst auf did-stop-loading. Sein vor dom-ready
+    // eingereihter erster Poll kann danach noch false liefern, bevor die
+    // Controllerprobe laeuft. Die Prueffrist gilt erst fuer das geladene DOM;
+    // der gesamte Kaltstart bleibt durch die Testfrist begrenzt.
+    if (inhalt.isLoadingMainFrame()) await new Promise(resolve => inhalt.once("did-stop-loading", resolve));
+    await warte(() => inhalt.executeJavaScript("Boolean(window.__anbieterProben)"));
+  };
   let pruefungen = 0;
   controller = ansicht.erstellen({
     WebContentsView: function(options) {
@@ -84,7 +91,7 @@ app.whenReady().then(async () => {
     return response.ok && (await response.text()).includes('id="freigegeben"');
   };
   let bestaetigung = controller.oeffnen(provider, url, { pruefen });
-  await warte(() => seiteBereit(decken[0]));
+  await seiteBereit(decken[0]);
   assert.equal(controller.offen, true);
   const kind = decken[0];
   const inhalt = seite(kind);
@@ -139,7 +146,7 @@ app.whenReady().then(async () => {
 
   bestaetigung = controller.oeffnen(provider, url, { pruefen });
   const zweite = decken[1];
-  await warte(() => seiteBereit(zweite));
+  await seiteBereit(zweite);
   await seite(zweite).executeJavaScript("window.onbeforeunload=()=>{return 'Seite behalten'};true");
   const zweiteSeite = seite(zweite);
   zweiteSeite.sendInputEvent({ type: "keyDown", keyCode: "ESC" });
@@ -148,7 +155,7 @@ app.whenReady().then(async () => {
 
   bestaetigung = controller.oeffnen(provider, url, { pruefen });
   const dritte = decken[2];
-  await warte(() => seiteBereit(dritte));
+  await seiteBereit(dritte);
   // Echter Nutzerklick der lokalen Fixture: Cookie und Freigabe kommen vom Server.
   await seite(dritte).executeJavaScript("document.getElementById('bestaetigen').click()", true);
   assert.equal(await bestaetigung, "bestaetigt");
@@ -160,7 +167,7 @@ app.whenReady().then(async () => {
 
   bestaetigung = controller.oeffnen(provider, url, { pruefen });
   const freie = decken[3];
-  await warte(() => seiteBereit(freie));
+  await seiteBereit(freie);
   assert.equal(controller.offen, true, "Auch schon freie Anbieter bleiben vollstaendig sichtbar");
   // Navigation und Umbauten der fremden Webseite erreichen die feste lokale
   // Rueckkehrleiste nicht. Ihr echter Klick schliesst nur dieses Modal.
@@ -178,12 +185,12 @@ app.whenReady().then(async () => {
   assert.equal(await js("video.currentTime"), 12.5); assert.equal(await js("window.sessionId"), "bestehende-watchparty");
   const abbruch = new AbortController();
   bestaetigung = controller.oeffnen(provider, url, { signal: abbruch.signal, pruefen });
-  await warte(() => seiteBereit(decken[4]));
+  await seiteBereit(decken[4]);
   abbruch.abort(); assert.equal(await bestaetigung, "geschlossen");
   assert.equal(controller.offen, false);
   assert.equal(parent.isDestroyed(), false, "Rueckkehr/ESC/Abort erhalten das Hauptfenster");
   bestaetigung = controller.oeffnen(provider, url, { pruefen });
-  await warte(() => seiteBereit(decken[5]));
+  await seiteBereit(decken[5]);
   parent.close();
   assert.equal(await bestaetigung, "geschlossen", "Hauptfenster schliesst den Overlay samt Quellenbeobachter");
   assert.equal(controller.offen, false);
