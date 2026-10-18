@@ -17,15 +17,27 @@ if (from < 0 || to < 0) throw new Error("Suchfunktionen in main.js nicht gefunde
 const actualSearch = source.slice(from, to);
 const checks = [];
 const check = (name, value) => { checks.push(Boolean(value)); console.log(`${value ? "OK  " : "FAIL"}  ${name}`); };
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function innerhalb(promise, beschreibung) {
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(beschreibung)), 2000);
+    })]);
+  } finally { clearTimeout(timer); }
+}
 
 async function startServer() {
   let ajax = 0; let html = 0; let ajaxClosed = 0;
+  let ajaxErreicht, ajaxGeschlossen;
+  const erreicht = new Promise(resolve => { ajaxErreicht = resolve; });
+  const geschlossen = new Promise(resolve => { ajaxGeschlossen = resolve; });
   const app = http.createServer((req, res) => {
     if (req.url === "/ajax/search") {
       ajax += 1;
-      req.on("close", () => { if (!res.writableEnded) ajaxClosed += 1; });
-      setTimeout(() => { if (!res.writableEnded) res.end(JSON.stringify([])); }, 120);
+      // Die Antwort bleibt offen, bis der echte Fetch-Abbruch sie schliesst.
+      // Feste 25-ms-Pausen konnten vor der Zustellung des Socket-Ereignisses enden.
+      res.on("close", () => { if (!res.writableEnded) ajaxClosed += 1; ajaxGeschlossen(); });
+      ajaxErreicht();
       return;
     }
     html += 1;
@@ -34,7 +46,10 @@ async function startServer() {
   });
   await new Promise(resolve => app.listen(0, "127.0.0.1", resolve));
   const base = `http://127.0.0.1:${app.address().port}`;
-  return { base, counts: () => ({ ajax, html, ajaxClosed }), close: () => new Promise(resolve => app.close(resolve)) };
+  return { base, erreicht, geschlossen, counts: () => ({ ajax, html, ajaxClosed }), close: () => {
+    app.closeAllConnections();
+    return new Promise(resolve => app.close(resolve));
+  } };
 }
 
 (async () => {
@@ -63,9 +78,10 @@ async function startServer() {
     const ajaxProvider = { id: "ani", name: "AniWorld", startUrl: server.base, ajax: true };
     const controller = new AbortController();
     const cancelled = context.searchProvider(ajaxProvider, "alt", controller.signal);
-    await sleep(25); controller.abort();
+    await innerhalb(server.erreicht, "Ajax-Anfrage erreicht den lokalen Server nicht");
+    controller.abort();
     await assert.rejects(cancelled, error => error.name === "AbortError");
-    await sleep(25);
+    await innerhalb(server.geschlossen, "Fetch-Abbruch schliesst die offene Ajax-Antwort nicht");
     check("abgebrochenes Ajax startet weder HTML-Fallback noch Alias-Variante", server.counts().ajax === 1 && server.counts().html === 0);
     check("Ajax-Fetch erhielt und befolgte das Signal", server.counts().ajaxClosed >= 1);
 

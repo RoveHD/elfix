@@ -8,7 +8,7 @@ const { pathToFileURL } = require("node:url");
 const profil = fs.mkdtempSync(path.join(os.tmpdir(), "elfix-folgenwechsel-"));
 app.setPath("userData", profil); app.disableHardwareAcceleration();
 let win;
-const frist = setTimeout(() => ende(1, Error("Folgenwechsel-Zeitlimit")), 25000);
+const frist = setTimeout(() => ende(1, Error("Folgenwechsel-Zeitlimit")), 45000);
 async function warte(fn) {
   const bis = Date.now() + 6000;
   while (Date.now() < bis) { if (await fn()) return; await new Promise(resolve => setTimeout(resolve, 25)); }
@@ -25,6 +25,7 @@ app.whenReady().then(async () => {
   fs.writeFileSync(alt, wav); fs.writeFileSync(neu, wav);
   const alteQuelle = pathToFileURL(alt).href, neueQuelle = pathToFileURL(neu).href;
   const episode = "https://s.to/serie/test/staffel-1/episode-2";
+  let erwarteteEpisode = episode;
   const auftrag = { id: 1, url: episode.replace("episode-2", "episode-1"), adresse: alteQuelle, typ: "datei", titel: "Folge 1", weiterZaehler: 0, hosterliste: [] };
   let wechselFertig, hosterFertig, anbieterAufrufe = 0, naechsteId = 1, ladeId;
   const fehler = [];
@@ -33,7 +34,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("spieler:folgen", async () => null);
   ipcMain.handle("spieler:chat-status", async () => ({ active: false, messages: [] }));
   ipcMain.handle("spieler:wechseln", (event, url) => {
-    assert.equal(url, episode);
+    assert.equal(url, erwarteteEpisode);
     ladeId = ++naechsteId;
     event.sender.send("spieler:auftrag", { id: ladeId, url, adresse: "", laden: true, startzeit: 0, titel: "Folge 2", rundeWarten: true });
     return new Promise(resolve => { wechselFertig = resolve; });
@@ -61,9 +62,15 @@ app.whenReady().then(async () => {
   assert.deepEqual(await lesen("[bild.paused,bild.getAttribute('src'),auftrag.startzeit,auftrag.rundeWarten,hosterSeiteBedienung.hidden,wechselLaeuft]"),
     [true, null, 0, true, false, false], "Ladeauftrag stoppt alte Folge und erlaubt Bestaetigung fuer neue Folge");
   assert.equal(await lesen("folgenPanel.hidden"), true, "Neue Folgenwahl schliesst die Liste bereits beim Ladeauftrag");
+  assert.deepEqual(await lesen("[anzeigeStelle.textContent,anzeigeDauer.textContent,regler.value,regler.style.getPropertyValue('--gespielt'),regler.style.getPropertyValue('--geladen')]"),
+    ["0:00", "0:00", "0", "0%", "0%"], "Ladeauftrag entfernt auch Zeit und Puffer der alten Folge");
+  assert.equal(await lesen("document.getElementById('warteAufAlle').textContent"), "Quelle wird gesucht …",
+    "Eine fehlende eigene Quelle wird nicht als Warten auf andere Teilnehmer dargestellt");
   wechselFertig({ ok: false, grund: "Aktuelle neue Folge ohne Quelle" });
   await warte(() => lesen("window.wechselFertig"));
   assert.equal(await lesen("fehlerKasten.hidden"), false, "Fehler des passenden aktuellen Ladeauftrags bleibt sichtbar");
+  assert.equal(await lesen("document.getElementById('warteAufAlle').hidden"), true,
+    "Quellensuche ueberlappt den Fehlerdialog nicht");
   assert.ok(await lesen("fehlerKasten.textContent.includes('Aktuelle neue Folge ohne Quelle')"));
   await lesen("window.wechselFertig=false;void folgeWechseln('https://s.to/serie/test/staffel-1/episode-2').then(()=>window.wechselFertig=true)");
   await warte(() => lesen("auftrag.id===3 && auftrag.laden && fehlerKasten.hidden"));
@@ -73,6 +80,9 @@ app.whenReady().then(async () => {
   assert.equal(await lesen("bild.currentSrc"), neueQuelle);
   assert.deepEqual(await lesen("[bild.paused,bild.currentTime,auftrag.rundeWarten]"), [true, 0, true],
     "Neue Folge beginnt bei Null und erhaelt die Watchparty-Schranke");
+  assert.equal(await lesen("document.getElementById('warteAufAlle').textContent"), "Warten auf alle …");
+  assert.equal(await lesen("document.getElementById('warteAufAlle').hidden"), false,
+    "Neue bereite Quelle zeigt die Watchparty-Schranke wieder");
   wechselFertig({ ok: false, grund: "VOE: Keine spielbare Quelle beobachtet" });
   await warte(() => lesen("window.wechselFertig"));
   assert.deepEqual(await lesen("[auftrag.id,fehlerKasten.hidden,bild.currentSrc,bild.currentTime]"), [4, true, neueQuelle, 0],
@@ -104,7 +114,31 @@ app.whenReady().then(async () => {
   await warte(() => lesen("window.wechselFertig"));
   assert.equal(await lesen("fehlerKasten.hidden"), true, "Schon eine neuere Folgenauswahl ohne Quelle verwirft den alten Fehler");
   assert.equal(fehler.length, 2, "Nur die beiden aktuellen Fehler werden gemeldet, keine spaeten Antworten");
-  console.log("OK Echter Player: alte Folge stoppt vor Quellenfindung, neue Quelle nach Bestaetigung, Start0/Watchparty und spaete Wechsel-/Hosterfehler sicher");
+  // Wiederholte Folgenwechsel in derselben Player-Instanz decken liegengebliebene
+  // Anfrage-/Medienzustände auf, auch bei Rueckkehr zu zuvor gewaehlten Folgen.
+  naechsteId = 8;
+  for (let i = 0; i < 24; i++) {
+    erwarteteEpisode = episode.replace("episode-2", "episode-" + (i % 6 + 1));
+    const ladend = naechsteId + 1;
+    await lesen("window.wechselFertig=false;void folgeWechseln(" + JSON.stringify(erwarteteEpisode) + ").then(()=>window.wechselFertig=true)");
+    await warte(() => lesen(`auftrag.id===${ladend} && auftrag.laden && bild.readyState===0`));
+    assert.deepEqual(await lesen("[bild.paused,bild.getAttribute('src'),anzeigeStelle.textContent,regler.value]"),
+      [true, null, "0:00", "0"], `Wechsel ${i + 1} entlaedt das vorherige Medium`);
+    const antwort = wechselFertig;
+    const quelle = i % 2 ? alteQuelle : neueQuelle;
+    const fertigId = ++naechsteId;
+    win.webContents.send("spieler:auftrag", { ...auftrag, id: fertigId, url: erwarteteEpisode,
+      adresse: quelle, startzeit: 0, rundeWarten: true });
+    await warte(() => lesen(`auftrag.id===${fertigId} && bild.readyState>=2`));
+    antwort({ ok: false, grund: "Verspaeteter Fehler Durchlauf " + i });
+    await warte(() => lesen("window.wechselFertig"));
+    assert.deepEqual(await lesen("[auftrag.url,bild.currentSrc,fehlerKasten.hidden,bild.currentTime]"),
+      [erwarteteEpisode, quelle, true, 0], `Wechsel ${i + 1} behaelt nur die aktuelle Folge`);
+    await lesen("bild.currentTime=12;bild.play()");
+    await warte(() => lesen("!bild.paused && bild.currentTime>=12"));
+  }
+  assert.equal(fehler.length, 2, "24 spaete Resolverantworten erzeugen keine falschen Playerfehler");
+  console.log("OK Echter Player: 24 wiederholte Folgenwechsel, alte Quelle/Zeit/Puffer weg, passende Quelle nach Bestaetigung, Start0/Watchparty und spaete Fehler sicher");
 }).then(() => ende(0), error => ende(1, error));
 function ende(code, error) {
   if (error) console.error(error.stack || error);

@@ -140,7 +140,7 @@ pruefe("Der Player meldet seinen Takt und seine Taten in die Runde",
   haupt.includes('ipcMain.on("spieler:takt"') && haupt.includes('ipcMain.on("spieler:aktion"')
   && haupt.includes("meldeWatchpartyStandAusSpieler"));
 pruefe("Befehle der Runde erreichen ihn, bevor sie in die Ansichten gehen",
-  haupt.includes("if (spielerLauf && await spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAktuell)) return;"));
+  haupt.includes("if (spielerLauf && await spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAktuell, quelleIstAktuell)) return;"));
 pruefe("Gerechnet wird mit den Regeln der Runde und nicht mit eigenen",
   haupt.includes("watchpartySync.zielZeitBerechnen(ereignis, watchparty.serverJetzt(eintrag.room))")
   && haupt.includes("watchpartySync.driftEntscheiden(spielerDrift"),

@@ -344,7 +344,7 @@ const anbieterSeitenAnsicht = anbieteransicht.erstellen({ WebContentsView,
   eltern: () => mainWindow, sitzung: () => browserSession,
   grenzen: () => spielerView?.getBounds() || browserBounds,
   zustandScript: () => verifizierungstor.zustandScript(), persistieren: cfSitzungPersistieren,
-  maskeScript: kennung => verifizierungstor.dialogMaskeScript(kennung),
+  maskeScript: (kennung, phase) => verifizierungstor.dialogMaskeScript(kennung, phase),
   verbinden: (inhalt, provider) => {
     webContentsProvider.set(inhalt.id, provider.id);
     inhalt.once("destroyed", () => webContentsProvider.delete(inhalt.id));
@@ -1033,7 +1033,8 @@ function configureBrowserSession() {
   browserSession.webRequest.onResponseStarted((details) => {
     if (details.statusCode < 200 || details.statusCode >= 400) return;
     direktBeobachter.get(details.webContentsId)?.({
-      adresse: details.url, rahmen: frameQuelle(details)
+      adresse: details.url, rahmen: frameQuelle(details), anfrageId: details.id,
+      rahmenId: details.frame?.frameTreeNodeId
     });
   });
   browserSession.setPermissionRequestHandler((webContents, permission, callback) => {
@@ -1107,6 +1108,7 @@ function trailerRahmenErlauben() {
 
 function installAdblock() {
   browserSession.webRequest.onBeforeRequest((details, callback) => {
+    anbieterAnfrageErfassen(details);
     const providerId = webContentsProvider.get(details.webContentsId);
     const provider = providers.find((item) => item.id === providerId);
 
@@ -9897,15 +9899,21 @@ async function anbieterSeiteOeffnen(provider, url, signal) {
   return anbieterSeitenAnsicht.oeffnen(provider, url, { signal,
     erlaubt: ziel => !shouldBlockProviderNavigation(ziel, provider)
       && (!quellenModus || !episodeIdentity(ziel) || isExpectedEpisodePage(ziel, url)),
-    quelleVorbereiten: quellenModus ? view => { quellenView = view; return anbieterQuelleBeobachten(view, url); } : undefined,
+    quelleVorbereiten: quellenModus ? view => {
+      quellenView = view;
+      return anbieterQuelleBeobachten(view, url, frisch => anbieterWunschWahl(provider, url, spielerLauf, optionen, frisch));
+    } : undefined,
     quelleUebernehmen: async (ergebnis, uebergabe) => {
       if (!aktuell() || uebergabe.signal.aborted) return false;
       const bisher = spielerLauf;
       const wahl = await anbieterHosterWahl(quellenView, ergebnis, bisher, optionen);
       if (!wahl || !aktuell() || uebergabe.signal.aborted) return false;
       const startzeit = sanitizePositiveNumber(spielerTakt.stelle || bisher?.startzeit || optionen.startzeit);
-      const rundeUebernehmen = Boolean(bisher?.rundeUebernehmen || (!bisher?.rundeWarten
-        && !optionen.rundeWarten && watchpartyLiveKeyForUrl(url) && watchpartyRaumForUrl(url)));
+      // Eine manuelle Freigabe kann laenger dauern als die Startschranke.
+      // Der wartende Ladeauftrag traegt dann nur noch deren alten Zustand.
+      // Nach dem Quellencommit entscheidet deshalb der frische Rundenstand.
+      const rundeUebernehmen = Boolean(bisher?.rundeUebernehmen
+        || (watchpartyLiveKeyForUrl(url) && watchpartyRaumForUrl(url)));
       // Das Fenster folgt dem neuen Resolver-Signal. Der ersetzte Resolver
       // wird abgebrochen, bevor er seine alte Quelle noch zurueckschreibt.
       auftragSignal = uebergabe.wechseln(() => direktAuftragBeginnen());
@@ -9941,9 +9949,6 @@ async function anbieterHosterWahl(view, ergebnis, lauf, optionen = {}) {
   const liste = Array.isArray(lauf?.hosterliste) ? lauf.hosterliste : [];
   const hosterPasst = eintrag => !ergebnis.hoster || !eintrag.hoster
     || String(eintrag.hoster).toLowerCase() === String(ergebnis.hoster).toLowerCase();
-  const bekannteAdresse = optionen.hosterLink || optionen.hosterWahl?.adresse || lauf?.link;
-  const bekannt = liste.find(eintrag => eintrag.adresse === bekannteAdresse && hosterPasst(eintrag));
-  if (bekannt) return { link: bekannt.adresse, hoster: bekannt.hoster, hosterliste: liste };
   // Sichtbare Sprache plus eindeutig zugeordneter Hoster, kein willkuerliches
   // erstes Listenelement. Das bestehende Skript liest die Provider-Kacheln.
   let frisch = [];
@@ -9952,7 +9957,7 @@ async function anbieterHosterWahl(view, ergebnis, lauf, optionen = {}) {
     catch { /* Ohne eindeutige Auswahl bleibt die freigegebene Ansicht offen. */ }
   }
   const belegt = new Set(ergebnis.anbieterLinks || []);
-  const adressen = [...frisch, ...liste].filter(eintrag => eintrag.adresse && belegt.has(eintrag.adresse));
+  const adressen = [...frisch, ...liste].filter(eintrag => eintrag.adresse && belegt.has(eintrag.adresse) && hosterPasst(eintrag));
   const eindeutig = adressen.length ? adressen : frisch.filter(eintrag => eintrag.sichtbar && ergebnis.hoster && hosterPasst(eintrag));
   const wahlen = [...new Map(eindeutig.map(eintrag => [eintrag.adresse, eintrag])).values()];
   if (wahlen.length === 1) {
@@ -9964,38 +9969,174 @@ async function anbieterHosterWahl(view, ergebnis, lauf, optionen = {}) {
   return !liste.length && !frisch.length ? { link: ergebnis.link || "", hoster: ergebnis.hoster || "", hosterliste: [] } : null;
 }
 
+function anbieterWunschWahl(provider, url, lauf, optionen = {}, frisch = []) {
+  const liste = frisch.length ? frisch : Array.isArray(lauf?.hosterliste) ? lauf.hosterliste : [];
+  const adresse = optionen.hosterLink || optionen.hosterWahl?.adresse;
+  const explizit = liste.find(eintrag => eintrag.adresse === adresse) || optionen.hosterWahl
+    || lauf?.hosterliste?.find(eintrag => eintrag.adresse === adresse);
+  if (explizit) return { ...explizit, fassungName: fassungsname(explizit) };
+  const runde = rundenFassungFuer(url);
+  const rundenLink = runde && linkFuerFassung(liste, runde.fassung, runde.hoster);
+  const schluessel = fassungSchluesselFuer(provider, url);
+  const gemerkt = schluessel ? fassung.lesen(loadFassungen(), schluessel) : null;
+  const bisher = lauf?.hosterliste?.find(eintrag => eintrag.adresse === lauf.link);
+  const wahl = rundenLink || bisher || direktlinks.besterLink(liste, gemerkt || "");
+  return wahl ? { ...wahl, fassungName: fassungsname(wahl) } : null;
+}
+
+function anbieterFormularToken(details) {
+  // Nur der Anbieter-Linktoken ist fuer die Zuordnung noetig, niemals die
+  // Cloudflare-Antwort, Cookies oder der komplette Formularinhalt.
+  if (details.method !== "POST" || !direktBeobachter.has(details.webContentsId)) return "";
+  const teile = (details.uploadData || []).map(eintrag => eintrag.bytes).filter(Boolean);
+  if (!teile.length || teile.reduce((summe, teil) => summe + teil.length, 0) > 32768) return "";
+  try { return new URLSearchParams(Buffer.concat(teile).toString("utf8")).get("t") || ""; }
+  catch { return ""; }
+}
+
+function anbieterAnfrageErfassen(details) {
+  const beobachten = direktBeobachter.get(details.webContentsId);
+  if (!beobachten) return;
+  const formularToken = anbieterFormularToken(details);
+  if (formularToken || details.resourceType === "subFrame") beobachten({
+    formularToken, anfrageId: details.id, angefragt: true,
+    anbieterAdresse: details.url, methode: details.method,
+    rahmenId: details.frame?.frameTreeNodeId
+  });
+}
+
 // Beobachtet dieselbe freigegebene Ansicht. Weder Weiter noch Play werden
 // hier ausgeloest; ein frisch eingesetzter Hoster-Iframe wird auch ohne
 // laufendes Video aus seinem eigenen DOM bzw. dem bestehenden Resolver gelesen.
-function anbieterQuelleBeobachten(view, episodeUrl) {
+function anbieterQuelleBeobachten(view, episodeUrl, wunschLesen = null) {
   const inhalt = view.webContents;
   const id = inhalt.id;
   const netz = [];
+  const formularAnfragen = new Map();
+  const anbieterAnfragen = new Map();
+  const rahmenNavigationen = new Map();
+  let vorbereiteteAuswahl = null;
   let seit = 0;
   let netzNummer = 0;
   let belegteQuelle = null;
+  let freigabeStand = "";
   const geprueft = new Map();
   const netzGelesen = new Set();
   const rahmenGelesen = new Map();
   const resolverGefragt = new Set();
+  const navigationsRahmen = (details, prozess, routing) => details?.frame
+    || (typeof webFrameMain !== "undefined" ? webFrameMain.fromId(prozess, routing) : null);
+  const navigationStart = (details, url, inPlace, haupt, prozess, routing) => {
+    if (details.isSameDocument ?? inPlace) return;
+    if (details.isMainFrame ?? haupt) { rahmenNavigationen.clear(); vorbereiteteAuswahl = null; return; }
+    const rahmen = navigationsRahmen(details, prozess, routing);
+    if (!rahmen || rahmen.name !== "player-iframe" || !Number.isFinite(rahmen.frameTreeNodeId)) return;
+    const ziel = details.url || url, id = rahmen.frameTreeNodeId, vorher = rahmenNavigationen.get(id);
+    // Script-/HTML-Redirects haben neue Request-IDs. Nur der bereits belegte
+    // Player-Frame selbst darf seine Navigationskette weiterfuehren.
+    const selbst = details.initiator?.frameTreeNodeId === id;
+    const fortsetzung = selbst && vorher?.bereit && vorher.ziel === rahmen.url;
+    const formular = Boolean(vorbereiteteAuswahl?.bereit && ziel === vorbereiteteAuswahl.formular);
+    rahmenNavigationen.set(id, { ausgang: fortsetzung ? vorher.ausgang : formular ? vorbereiteteAuswahl.adresse : ziel,
+      formular: fortsetzung ? vorher.formular : formular, ziel, bereit: false });
+  };
+  const navigationFertig = (_event, url, code, _text, haupt, prozess, routing) => {
+    if (haupt) return;
+    const rahmen = navigationsRahmen(null, prozess, routing);
+    const navigation = rahmen && rahmenNavigationen.get(rahmen.frameTreeNodeId);
+    if (!navigation) return;
+    navigation.ziel = url;
+    navigation.bereit = code >= 200 && code < 400;
+  };
+  inhalt.on?.("did-start-navigation", navigationStart);
+  inhalt.on?.("did-frame-navigate", navigationFertig);
   direktBeobachter.set(id, eintrag => {
-    netz.push({ ...eintrag, zeit: Date.now(), nummer: ++netzNummer });
+    if (eintrag.angefragt) {
+      if (eintrag.formularToken) formularAnfragen.set(eintrag.anfrageId, eintrag.formularToken);
+      if (formularAnfragen.size > 40) formularAnfragen.delete(formularAnfragen.keys().next().value);
+      if (eintrag.anbieterAdresse && !anbieterAnfragen.has(eintrag.anfrageId)) {
+        anbieterAnfragen.set(eintrag.anfrageId, {
+          adresse: eintrag.anbieterAdresse, rahmenId: eintrag.rahmenId,
+          auswahl: eintrag.methode === "POST" && vorbereiteteAuswahl?.bereit
+            && eintrag.anbieterAdresse === vorbereiteteAuswahl.formular ? vorbereiteteAuswahl.adresse : ""
+        });
+        if (anbieterAnfragen.size > 80) anbieterAnfragen.delete(anbieterAnfragen.keys().next().value);
+      }
+      return;
+    }
+    const abruf = anbieterAnfragen.get(eintrag.anfrageId);
+    netz.push({ ...eintrag, formularToken: formularAnfragen.get(eintrag.anfrageId) || eintrag.formularToken,
+      anbieterAdresse: abruf?.adresse, auswahlAdresse: abruf?.auswahl, rahmenId: eintrag.rahmenId ?? abruf?.rahmenId,
+      zeit: Date.now(), nummer: ++netzNummer });
     if (netz.length > 400) netz.shift();
   });
+  const auswahlLesen = async (signal, auswaehlen) => {
+    if (signal.aborted || !isLiveView(view) || !isExpectedEpisodePage(inhalt.getURL(), episodeUrl) || !wunschLesen) return null;
+    let frisch;
+    try { frisch = JSON.parse(String(await inhalt.executeJavaScript(direktlinks.hosterlinkScript()) || "[]")); }
+    catch { return null; }
+    if (signal.aborted || !isExpectedEpisodePage(inhalt.getURL(), episodeUrl)) return null;
+    const auswahl = await inhalt.executeJavaScript(direktlinks.anbieterAuswahlScript(wunschLesen(frisch), auswaehlen));
+    return !signal.aborted && isExpectedEpisodePage(inhalt.getURL(), episodeUrl) ? auswahl : null;
+  };
+  const freigabeLesen = async (signal, formularErlaubt = false) => {
+    const auswahl = await auswahlLesen(signal, false);
+    if (!auswahl?.bereit || !auswahl.ohneDialog || !auswahl.adresse || auswahl.iframe !== auswahl.adresse) return null;
+    const rahmen = inhalt.mainFrame?.frames.find(frame => frame.name === "player-iframe");
+    if (!rahmen || !providerModel.isHttpUrl(rahmen.url)) return null;
+    const navigation = rahmenNavigationen.get(rahmen.frameTreeNodeId);
+    const navigationsBeleg = navigation?.bereit && navigation.ausgang === auswahl.adresse && navigation.ziel === rahmen.url
+      && (!navigation.formular || formularErlaubt);
+    const belegt = navigationsBeleg || netz.some(e => !e.vonWerbung && Number.isFinite(e.rahmenId) && e.rahmenId === rahmen.frameTreeNodeId && e.adresse === rahmen.url
+      && (e.anbieterAdresse === auswahl.adresse || e.auswahlAdresse === auswahl.adresse));
+    return belegt ? { link: auswahl.adresse, hoster: auswahl.hoster, rahmen: rahmen.url, rahmenId: rahmen.frameTreeNodeId } : null;
+  };
   return {
-    schliessen: () => direktBeobachter.delete(id),
-    pruefen: async ({ signal, seit: klickZeit }) => {
+    schliessen: () => {
+      direktBeobachter.delete(id);
+      inhalt.removeListener?.("did-start-navigation", navigationStart);
+      inhalt.removeListener?.("did-frame-navigate", navigationFertig);
+    },
+    freigegeben: async ({ signal, quelle }) => {
+      const freigabe = await freigabeLesen(signal);
+      return Boolean(freigabe && (!quelle || (quelle.seite === freigabe.rahmen
+        && quelle.anbieterLinks?.includes(freigabe.link))));
+    },
+    vorbereiten: async ({ signal }) => {
+      if (signal.aborted || !isLiveView(view) || !isExpectedEpisodePage(inhalt.getURL(), episodeUrl)) return false;
+      if (!wunschLesen || netz.some(eintrag => eintrag.formularToken)) return true;
+      const auswahl = await auswahlLesen(signal, true);
+      if (auswahl?.bereit) vorbereiteteAuswahl = auswahl;
+      return !signal.aborted && isExpectedEpisodePage(inhalt.getURL(), episodeUrl) && Boolean(auswahl?.bereit);
+    },
+    pruefen: async ({ signal, seit: klickZeit, ohneBestaetigung = false }) => {
       const seitePasst = () => !episodeIdentity(inhalt.getURL()) || isExpectedEpisodePage(inhalt.getURL(), episodeUrl);
       if (signal.aborted || !isLiveView(view) || !seitePasst()) return null;
-      if (seit !== klickZeit) {
+      const freigabe = wunschLesen ? await freigabeLesen(signal, !ohneBestaetigung) : null;
+      if (ohneBestaetigung && !freigabe) return null;
+      const aktuellerStand = freigabe ? freigabe.link + "|" + freigabe.rahmenId + "|" + freigabe.rahmen : "";
+      if (seit !== klickZeit || aktuellerStand !== freigabeStand) {
+        freigabeStand = aktuellerStand;
         seit = klickZeit; geprueft.clear(); netzGelesen.clear(); rahmenGelesen.clear(); resolverGefragt.clear(); belegteQuelle = null;
       }
       if (belegteQuelle) return belegteQuelle;
-      const lagen = await executeJavaScriptInMediaFrames(view, `(() => {
+      let kacheln = [];
+      try { kacheln = JSON.parse(String(await inhalt.executeJavaScript(direktlinks.hosterlinkScript()) || "[]")); }
+      catch { /* Ohne Kacheln bleibt eine mehrdeutige Fassung unbestaetigt. */ }
+      const belegteLinks = () => {
+        if (freigabe) return [freigabe.link];
+        const neu = netz.filter(eintrag => eintrag.zeit >= seit && !eintrag.vonWerbung);
+        const tokens = new Set(neu.map(eintrag => eintrag.formularToken).filter(Boolean));
+        return [...new Set([...neu.map(eintrag => eintrag.adresse), ...kacheln.filter(eintrag => {
+          try { return tokens.has(new URL(eintrag.adresse).searchParams.get("t")); } catch { return false; }
+        }).map(eintrag => eintrag.adresse)])];
+      };
+      let lagen = await executeJavaScriptInMediaFrames(view, `(() => {
         const video = Array.from(document.querySelectorAll('video')).sort((a,b) => (b.duration||0)-(a.duration||0))[0];
         return { seite: location.href, currentSrc: video?.currentSrc || '', dauer: Number(video?.duration)||0,
           html: document.documentElement.outerHTML.slice(0, 4*1024*1024) };
       })()`);
+      if (ohneBestaetigung) lagen = lagen.filter(lage => lage.seite === freigabe.rahmen);
       if (signal.aborted || !isLiveView(view) || !seitePasst()) return null;
       const belegen = async (fund, dauer = 0, beleg = "") => {
         const adresse = fund?.quelle?.adresse;
@@ -10008,7 +10149,7 @@ function anbieterQuelleBeobachten(view, episodeUrl) {
         if (vorprobe && (vorprobe.ergebnis || vorprobe.beleg === beleg)) return vorprobe.ergebnis;
         let laenge = dauer;
         if (art === "playlist") {
-          try { laenge = await direktbeobachtung.playlistPruefen((ziel, aufbau) => browserSession.fetch(ziel, aufbau), adresse, kopfzeilen, signal); }
+          try { laenge = await direktbeobachtung.playlistPruefen((...args) => browserSession.fetch(...args), adresse, kopfzeilen, signal); }
           catch { laenge = 0; }
         } else if (dauer >= streamspur.MINDESTLAUFZEIT_S) {
           const probe = await cfGeschuetzteAnfragePruefen({ url: adresse, expected: "mp4",
@@ -10016,13 +10157,18 @@ function anbieterQuelleBeobachten(view, episodeUrl) {
           if (!probe.ok) laenge = 0;
         }
         const wahl = streamspur.waehlen([{ adresse, art, laufzeit: laenge, vonWerbung: Boolean(fund.vonWerbung) }], { laufzeiten: { [adresse]: laenge } });
-        const ergebnis = !signal.aborted && seitePasst() && wahl.quelle && laenge >= streamspur.MINDESTLAUFZEIT_S
+        const nochFreigegeben = !freigabe || (() => {
+          const rahmen = inhalt.mainFrame?.frames.find(frame => frame.frameTreeNodeId === freigabe.rahmenId);
+          return rahmen?.url === freigabe.rahmen;
+        })();
+        const ergebnis = !signal.aborted && seitePasst() && nochFreigegeben && wahl.quelle && laenge >= streamspur.MINDESTLAUFZEIT_S
           ? { ...fund, ok: true, quelle: { ...fund.quelle, typ: art === "playlist" ? "hls" : "datei" }, kopfzeilen,
-            anbieterLinks: netz.filter(eintrag => eintrag.zeit >= seit && !eintrag.vonWerbung).map(eintrag => eintrag.adresse) } : null;
+            anbieterLinks: belegteLinks() } : null;
         geprueft.set(schluessel, { ergebnis, beleg });
         return ergebnis;
       };
       const netzKandidaten = [...new Map(netz.filter(e => e.zeit >= seit && streamspur.art(e.adresse) === "playlist")
+        .filter(e => !ohneBestaetigung || e.rahmen === freigabe.rahmen)
         .map(e => [e.adresse + "|" + e.rahmen + "|" + Boolean(e.vonWerbung), e])).values()]
         .sort((a, b) => b.nummer - a.nummer).filter(e => !netzGelesen.has(e.nummer)).slice(0, 12);
       for (const eintrag of netzKandidaten) {
@@ -10038,7 +10184,7 @@ function anbieterQuelleBeobachten(view, episodeUrl) {
           const fund = await belegen({ quelle: { adresse: lage.currentSrc, hoehe: 0 }, seite: lage.seite, link: lage.seite }, lage.dauer);
           if (fund) { belegteQuelle = fund; return fund; }
         }
-        if (!providerModel.isHttpUrl(lage.seite) || !isKnownVideoHosterUrl(lage.seite)
+        if (!providerModel.isHttpUrl(lage.seite) || (!isKnownVideoHosterUrl(lage.seite) && lage.seite !== freigabe?.rahmen)
           || rahmenGelesen.get(lage.seite) === lage.html) continue;
         rahmenGelesen.set(lage.seite, lage.html);
         const gelesen = direktquelle.aufloesen(lage.html || "", lage.seite);
@@ -10049,7 +10195,7 @@ function anbieterQuelleBeobachten(view, episodeUrl) {
         }
         if (signal.aborted) return null;
         const fund = await belegen({ ...ergebnis, link: lage.seite,
-          hoster: /voe/i.test(providerModel.hostFromUrl(lage.seite)) ? "VOE" : "" }, lage.dauer, lage.html);
+          hoster: lage.seite === freigabe?.rahmen ? freigabe.hoster : /voe/i.test(providerModel.hostFromUrl(lage.seite)) ? "VOE" : "" }, lage.dauer, lage.html);
         if (fund) { belegteQuelle = fund; return fund; }
       }
       return null;
@@ -12877,7 +13023,7 @@ function meldeWatchpartyStandAusSpieler(position, pausiert, frameTime) {
  * zusaetzlich in die Anbieteransichten. Passt er nicht zu dem, was gerade
  * laeuft, bleibt es bei `false` und der alte Weg entscheidet.
  */
-async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAktuell = () => true) {
+async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAktuell = () => true, quelleIstAktuell = istAktuell) {
   if (!spielerLauf) return false;
   const adresse = spielerLauf.url;
 
@@ -12925,7 +13071,7 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
     let geladen;
     try {
       geladen = await ohneWatchpartyFolgenwechselEcho(provider, nachricht.url,
-        () => direktFolgeSpielen(provider, nachricht.url, { startzeit: 0, rundeWarten: true, istAktuell }));
+        () => direktFolgeSpielen(provider, nachricht.url, { startzeit: 0, rundeWarten: true, istAktuell: quelleIstAktuell }));
     } finally {
       if (spielerFolgenVorbereitung === vorbereitung) spielerFolgenVorbereitung = null;
     }
@@ -12982,7 +13128,7 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
     if (!provider) return false;
     const geladen = await ohneWatchpartyFolgenwechselEcho(provider, nachricht.url,
       () => direktFolgeSpielen(provider, nachricht.url,
-        { startzeit: Math.max(0, Number(nachricht.position) || 0), rundeWarten: true, istAktuell }));
+        { startzeit: Math.max(0, Number(nachricht.position) || 0), rundeWarten: true, istAktuell: quelleIstAktuell }));
     if (!istAktuell()) return true;
     if (!geladen?.ok) {
       sendToast(geladen?.grund || "Die neue Folge konnte nicht geöffnet werden.");
@@ -13322,6 +13468,13 @@ async function applyWatchpartyControl(nachricht) {
   if (urteil.merken) watchpartyLetztesEreignis.set(merker, urteil.merken);
   const angenommen = watchpartyLetztesEreignis.get(merker);
   const istAktuell = () => watchpartyLetztesEreignis.get(merker) === angenommen;
+  // Eine manuelle Anbieterfreigabe kann die Startschranke ueberleben. Pause
+  // oder ein neuer Start derselben Folge ersetzt deren Steuerung, aber nicht
+  // ihren offenen Quellenauftrag. Dessen Signal und Spieler-ID pruefen die
+  // Lade-/Uebergabefunktionen weiterhin; eine andere Folge gilt hier nie.
+  const quelleIstAktuell = () => istAktuell() || Boolean(angenommen?.episodeId
+    && watchpartyLetztesEreignis.get(merker)?.episodeId === angenommen.episodeId
+    && spielerLauf && istGleicheFolge(spielerLauf.url, nachricht.url));
 
   const binHost = Boolean(eintrag.hostId) && eintrag.hostId === eintrag.myId;
 
@@ -13338,7 +13491,7 @@ async function applyWatchpartyControl(nachricht) {
 
   // Laeuft der eigene Player, gehoert der Befehl ihm. Er bekommt ihn als Zahl
   // und nicht als eingespieltes Skript - das Video gehoert uns.
-  if (spielerLauf && await spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAktuell)) return;
+  if (spielerLauf && await spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAktuell, quelleIstAktuell)) return;
   if (!istAktuell()) return;
 
   const ansichtFolgeNachholen = urteil.tun === "syncstart" && nachricht.url

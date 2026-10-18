@@ -309,7 +309,52 @@ function hosterlinkScript() {
   })()`;
 }
 
+// Nur die Hosterkachel vorwaehlen. Der Originaldialog und seine Bestaetigung
+// bleiben beim Nutzer. Frische Tokens werden ueber Hoster und Fassung gefunden.
+function anbieterAuswahlScript(wunsch, auswaehlen = true) {
+  return `(() => {
+    const wunsch = ${JSON.stringify(wunsch || null)};
+    const kacheln = Array.from(document.querySelectorAll('[data-play-url]'));
+    if (!kacheln.length) return { bereit: !wunsch || document.readyState !== 'loading', unterstuetzt: false };
+    if (!wunsch || document.readyState === 'loading') return { bereit: false, unterstuetzt: true };
+    const klein = wert => String(wert || '').trim().toLowerCase();
+    const adresse = node => { try { return new URL(node.getAttribute('data-play-url'), location.href).href; } catch { return ''; } };
+    const sprache = klein(wunsch.fassungName || wunsch.spracheRoh || wunsch.sprache);
+    const passend = kacheln.filter(node => klein(node.getAttribute('data-provider-name')) === klein(wunsch.hoster)
+      && sprache && klein(node.getAttribute('data-language-label')) === sprache);
+    const ziel = kacheln.find(node => adresse(node) === wunsch.adresse) || (passend.length === 1 ? passend[0] : null);
+    if (!ziel) return { bereit: false, unterstuetzt: true };
+    if (!ziel.classList.contains('active')) { ${auswaehlen ? "ziel.click();" : ""} return { bereit: false, unterstuetzt: true }; }
+    const form = document.getElementById('player-prepare-form');
+    const modal = document.getElementById('playerPrepareModal');
+    // Eine beginnende Fade-Animation ist schon eine offene Bestaetigung.
+    const angezeigt = el => {
+      if (!el || !el.getClientRects().length) return false;
+      for (let p=el;p;p=p.parentElement) { const s=getComputedStyle(p); if(s.display==='none'||s.visibility==='hidden') return false; }
+      return true;
+    };
+    const ohneDialog = !angezeigt(modal) && !angezeigt(form);
+    const iframe = document.getElementById('player-iframe') || document.querySelector('iframe[name="player-iframe"]');
+    const stand = { adresse: adresse(ziel), formular: form?.action || '', iframe: iframe?.src || '', ohneDialog,
+      hoster: String(ziel.getAttribute('data-provider-name') || '') };
+    // Eine gueltige Session kann den Hoster direkt laden. Die alte, leere
+    // Modalform ist dann kein Freigabetor; der Quellenbeobachter verlangt
+    // zusaetzlich den Redirectbeleg dieses Links im richtigen Player-Iframe.
+    if (ohneDialog) return { ...stand, bereit: stand.iframe === stand.adresse, unterstuetzt: true };
+    // Die Modalform muss dieselbe Kachel enthalten. Eine fruehere englische
+    // Form darf auch bei bereits deutscher active-Klasse nicht freigegeben sein.
+    const token = document.getElementById('player-prepare-token');
+    const erwarteterToken = new URL(adresse(ziel)).searchParams.get('t');
+    if (token?.value && erwarteterToken && token.value !== erwarteterToken) {
+      ${auswaehlen ? "ziel.click();" : ""} return { bereit: false, unterstuetzt: true };
+    }
+    const bereit = !token || !erwarteterToken || token.value === erwarteterToken;
+    return { ...stand, bereit, unterstuetzt: true };
+  })()`;
+}
+
 module.exports = {
+  anbieterAuswahlScript,
   hosterlinkScript,
   linksOrdnen,
   besterLink,

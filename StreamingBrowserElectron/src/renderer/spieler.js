@@ -790,7 +790,10 @@ function pufferZeigen(an) {
 }
 
 function rundeWartenZeigen() {
-  document.getElementById("warteAufAlle").hidden = !rundeWarten;
+  const hinweis = document.getElementById("warteAufAlle");
+  const quelleFehlt = Boolean(auftrag?.laden && !auftrag.adresse);
+  hinweis.hidden = !fehlerKasten.hidden || (!rundeWarten && !quelleFehlt);
+  hinweis.textContent = quelleFehlt ? "Quelle wird gesucht …" : "Warten auf alle …";
 }
 
 /**
@@ -803,10 +806,12 @@ function rundeWartenZeigen() {
  * als eines.
  */
 function spielenZeichnen() {
+  rundeWartenZeigen();
   if (navigator.mediaSession) navigator.mediaSession.playbackState = bild.paused ? "paused" : "playing";
   const pausiert = bild.paused && !startAusstehend;
   const zustand = pausiert ? "play" : "pause";
-  const beschreibung = rundeWarten ? "Warten auf alle …"
+  const beschreibung = auftrag?.laden && !auftrag.adresse ? "Quelle wird gesucht …"
+    : rundeWarten ? "Warten auf alle …"
     : startAusstehend ? "Gemeinsamen Start abbrechen (Leertaste)"
     : pausiert ? "Abspielen (Leertaste)" : "Pause (Leertaste)";
   for (const knopf of [knopfSpielen, knopfMitte]) {
@@ -2895,6 +2900,11 @@ function starten(neuerAuftrag) {
   bild.pause();
   bild.removeAttribute("src");
   bild.load();
+  anzeigeStelle.textContent = "0:00";
+  anzeigeDauer.textContent = "0:00";
+  regler.value = "0";
+  regler.style.setProperty("--gespielt", "0%");
+  regler.style.setProperty("--geladen", "0%");
   videoUpscaler?.setzeAktiv(auftrag.videoUpscaling === true, auftrag.videoUpscalingMethod, auftrag.videoUpscalingResolution);
 
   kopfTitelSetzen(auftrag.titel || "Wiedergabe", auftrag.folgentitel || "");

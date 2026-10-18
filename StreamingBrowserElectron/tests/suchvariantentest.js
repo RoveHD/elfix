@@ -145,9 +145,19 @@ function umgebungBauen() {
       "Häfen Avatar",
       "Avatar"
     ];
-    const beginn = Date.now();
-    const antworten = await Promise.all(SCHREIBWEISEN.map(suche));
-    const dauer = Date.now() - beginn;
+    const antworten = [], laufzeiten = [];
+    // Eine Suche fragt weiterhin alle fuenf Anbieter gleichzeitig ab. Nicht
+    // vierzehn unabhaengige Suchvorgaenge auf denselben lokalen HTTP-Server
+    // stapeln: diese Testlast kann das Anbieterbudget bereits verbrauchen.
+    for (let i = 0; i < SCHREIBWEISEN.length; i += 2) {
+      antworten.push(...await Promise.all(SCHREIBWEISEN.slice(i, i + 2).map(async frage => {
+        const beginn = Date.now();
+        const antwort = await suche(frage);
+        laufzeiten.push(Date.now() - beginn);
+        return antwort;
+      })));
+    }
+    const dauer = Math.max(...laufzeiten);
 
     SCHREIBWEISEN.forEach((frage, i) => {
       const sto = antworten[i].find((a) => a.providerId === "sto");

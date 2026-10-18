@@ -107,25 +107,50 @@ function torScript(_maxKlicks = 4, beobachten = true) {
 // Die interaktive Anbieteransicht behaelt den ganzen mittleren Dialog,
 // einschliesslich eines Weiter-Knopfs ausserhalb des eigentlichen Widgets.
 // Separat vom schmalen Resolver-Tor: dessen Geometrie bleibt unveraendert.
-function dialogMaskeScript(klickKennung = "") {
+function dialogMaskeScript(klickKennung = "", phase = "warten") {
   return `(() => {
+    globalThis.__elfixAnbieterLaden = ${phase === "laden"};
+    globalThis.__elfixAnbieterVorbereiten = ${phase === "vorbereiten"};
     if (globalThis.__elfixAnbieterMaskierung) return globalThis.__elfixAnbieterMaskierung();
     const maskieren = () => {
     const kenn = 'data-elfix-anbieterdialog';
-    document.getElementById('__elfixAnbieterAbdeckung')?.remove();
     document.querySelectorAll('[' + kenn + ']').forEach(el => el.removeAttribute(kenn));
     let stil = document.getElementById('__elfixAnbieterMaske');
     if (!stil) {
       stil = document.createElement('style'); stil.id = '__elfixAnbieterMaske';
-      stil.textContent = '#__elfixAnbieterAbdeckung{position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important}'
+      stil.textContent = 'html,body{overflow:hidden!important;scrollbar-width:none!important}.modal,dialog,[role="dialog"]{scrollbar-width:none!important}'
+        + 'html::-webkit-scrollbar,body::-webkit-scrollbar,.modal::-webkit-scrollbar,dialog::-webkit-scrollbar,[role="dialog"]::-webkit-scrollbar{display:none!important}'
+        + '#__elfixAnbieterAbdeckung{position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important}'
         + '#__elfixAnbieterAbdeckung>div{position:absolute!important;background:#0b111a!important;opacity:1!important;pointer-events:auto!important;margin:0!important;padding:0!important;border:0!important}';
       (document.head || document.documentElement).appendChild(stil);
     }
-    const abdeckung = document.createElement('div'); abdeckung.id = '__elfixAnbieterAbdeckung';
+    const abdeckung = document.getElementById('__elfixAnbieterAbdeckung') || document.createElement('div');
+    abdeckung.id = '__elfixAnbieterAbdeckung';
     abdeckung.setAttribute('aria-hidden', 'true');
     const voll = document.createElement('div'); voll.style.cssText = 'inset:0!important';
-    abdeckung.appendChild(voll);
-    document.documentElement.appendChild(abdeckung);
+    const ladeanzeige = () => {
+      const phase = globalThis.__elfixAnbieterLaden ? 'laden' : 'warten';
+      // Observer und Poll pruefen laufend weiter. Solange der Zustand gleich
+      // bleibt, behalten DOM und Animation ihre laufende Instanz/Zeitachse.
+      if (abdeckung.getAttribute('data-elfix-ladephase') === phase && abdeckung.querySelector('#__elfixAnbieterLaden')) return;
+      abdeckung.setAttribute('data-elfix-ladephase', phase);
+      abdeckung.replaceChildren(voll);
+      const lade = document.createElement('span');
+      lade.id = '__elfixAnbieterLaden';
+      lade.style.cssText = 'position:absolute!important;inset:0!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;gap:20px!important;color:#eef4fc!important;font:600 20px "Segoe UI",sans-serif!important;';
+      const titel = document.createElement('span');
+      titel.textContent = globalThis.__elfixAnbieterLaden ? 'Video wird geladen …' : 'Bestätigung wird vorbereitet …';
+      const balken = document.createElement('span');
+      balken.style.cssText = 'display:block!important;width:300px!important;max-width:80vw!important;height:4px!important;background:#223245!important;border-radius:4px!important;overflow:hidden!important;';
+      const fortschritt = document.createElement('span');
+      fortschritt.style.cssText = 'display:block!important;width:38%!important;height:100%!important;background:#a4c7ef!important;border-radius:4px!important;';
+      if (!matchMedia('(prefers-reduced-motion: reduce)').matches) fortschritt.animate([{transform:'translateX(-100%)'},{transform:'translateX(365%)'}], {duration:1350,iterations:Infinity,easing:'ease-in-out'});
+      balken.appendChild(fortschritt); lade.append(titel,balken); abdeckung.appendChild(lade);
+    };
+    if (!abdeckung.isConnected) {
+      abdeckung.appendChild(voll);
+      document.documentElement.appendChild(abdeckung);
+    }
     const sichtbar = el => {
       if (!el?.isConnected) return false;
       const r = el.getBoundingClientRect();
@@ -174,8 +199,8 @@ function dialogMaskeScript(klickKennung = "") {
     }
     if (!kasten) {
       globalThis.__elfixAnbieterDialog = null;
-      if (globalThis.__elfixAnbieterSeiteZeigen) abdeckung.replaceChildren();
-      return false;
+      ladeanzeige();
+      return { bereit: true };
     }
     for (let el = kasten; el && el !== document.body; el = el.parentElement) {
       if (begrenzt(el) && weiter(el) && el.matches('dialog,[role="dialog"],.modal-content')) { kasten = el; break; }
@@ -190,6 +215,9 @@ function dialogMaskeScript(klickKennung = "") {
         if (event.isTrusted && knopf && globalThis.__elfixAnbieterDialog?.contains(knopf)
           && /^(weiter|continue)(?:\\b|$)/i.test(String(knopf.innerText || knopf.value || '').trim())) {
           console.log(${JSON.stringify(klickKennung)} + ':' + Date.now());
+          globalThis.__elfixAnbieterWeiterPruefung = globalThis.__elfixAnbieterPruefung;
+          globalThis.__elfixAnbieterLaden = true;
+          globalThis.__elfixAnbieterMaskierung();
         }
       }, true);
     }
@@ -201,6 +229,17 @@ function dialogMaskeScript(klickKennung = "") {
     const rechts = Math.max(links, Math.min(innerWidth, neu.right));
     const oben = Math.max(0, Math.min(innerHeight, neu.top));
     const unten = Math.max(oben, Math.min(innerHeight, neu.bottom));
+    const fehler = kasten.querySelector('#player-prepare-error,[role="alert"],.alert-danger');
+    const pruefung = Array.from(kasten.querySelectorAll('#player-prepare-turnstile,#player-prepare-altcha,.cf-turnstile,.h-captcha,.g-recaptcha'))
+      .filter(el => { const s=getComputedStyle(el);return s.display!=='none'&&s.visibility!=='hidden'; }).map(el => el.id || el.className).join('|');
+    const fehlerText = fehler && getComputedStyle(fehler).display !== 'none' ? String(fehler.innerText || fehler.textContent || '').trim() : '';
+    globalThis.__elfixAnbieterPruefung = pruefung;
+    if (fehlerText || (globalThis.__elfixAnbieterLaden && globalThis.__elfixAnbieterWeiterPruefung
+      && pruefung && pruefung !== globalThis.__elfixAnbieterWeiterPruefung)) globalThis.__elfixAnbieterLaden = false;
+    const stand = { bereit: true, left: neu.left, top: neu.top, width: neu.width, height: neu.height, weiter: weiter(kasten),
+      viewportWidth: innerWidth, viewportHeight: innerHeight, fehler: fehlerText, pruefung };
+    if (globalThis.__elfixAnbieterLaden || globalThis.__elfixAnbieterVorbereiten) { ladeanzeige(); return stand; }
+    abdeckung.removeAttribute('data-elfix-ladephase');
     abdeckung.replaceChildren();
     for (const [x,y,w,h] of [[0,0,innerWidth,oben],[0,unten,innerWidth,innerHeight-unten],
       [0,oben,links,unten-oben],[rechts,oben,innerWidth-rechts,unten-oben]]) {
@@ -216,13 +255,7 @@ function dialogMaskeScript(klickKennung = "") {
       + 'border-radius:'+getComputedStyle(kasten).borderRadius+'!important;'
       + 'box-shadow:0 0 0 '+Math.max(innerWidth,innerHeight)+'px #0b111a!important;';
     abdeckung.appendChild(rundung);
-    const fehler = kasten.querySelector('#player-prepare-error,[role="alert"],.alert-danger');
-    const pruefung = Array.from(kasten.querySelectorAll('#player-prepare-turnstile,#player-prepare-altcha,.cf-turnstile,.h-captcha,.g-recaptcha'))
-      .filter(el => { const s=getComputedStyle(el);return s.display!=='none'&&s.visibility!=='hidden'; }).map(el => el.id || el.className).join('|');
-    return { left: neu.left, top: neu.top, width: neu.width, height: neu.height, weiter: weiter(kasten),
-      viewportWidth: innerWidth, viewportHeight: innerHeight,
-      fehler: fehler && getComputedStyle(fehler).display !== 'none' ? String(fehler.innerText || fehler.textContent || '').trim() : '',
-      pruefung };
+    return stand;
     };
     globalThis.__elfixAnbieterMaskierung = maskieren;
     // DOM-Umbauten, Dialogschluss und Groessenaenderungen werden vor dem

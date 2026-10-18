@@ -34,12 +34,11 @@ function erstellen({ WebContentsView, eltern, sitzung, grenzen, zustandScript, m
     parent.contentView.addChildView(view);
     parent.contentView.addChildView(decke);
     let ausschnitt = null;
+    let maskeBereit = false;
     let dialogAngehaengt = false;
     let phase = "warten";
     let lokaleSeiteBereit = false;
     let letzterLokalerStand = "";
-    let manuellZeigen = false;
-    let manuellSeite = false;
     let weiterStand = null;
     const lokalerStand = () => {
       if (lokaleSeiteBereit && !lokal.isDestroyed()) {
@@ -51,16 +50,14 @@ function erstellen({ WebContentsView, eltern, sitzung, grenzen, zustandScript, m
     };
     const anzeigen = neuePhase => {
       phase = neuePhase;
-      const seiteSichtbar = lokaleSeiteBereit && (phase === "dialog" || phase === "seite");
+      const seiteSichtbar = lokaleSeiteBereit && (maskeBereit || (!maskeScript && phase === "seite"));
       if (seiteSichtbar && !dialogAngehaengt) {
         dialogAngehaengt = true;
         anordnen();
-        view.setVisible(true);
         inhalt.setBackgroundThrottling(false);
         inhalt.focus();
       }
       else if (!seiteSichtbar && dialogAngehaengt) {
-        view.setVisible(false);
         dialogAngehaengt = false;
         anordnen(); lokal.focus();
       }
@@ -89,15 +86,18 @@ function erstellen({ WebContentsView, eltern, sitzung, grenzen, zustandScript, m
       }
     };
     anordnen();
-    // Owner und Viewport zuerst anlegen. Ein vor dem ersten Bounds gesetztes
-    // hidden kann einen 0px-Viewport hinterlassen, in dem kein Dialog erkannt wird.
-    view.setVisible(false);
+    // Native Vollueberdeckung haelt auch bei setVisible(true) rAF an. Die
+    // lokale Decke wird deshalb nach Installation der DOM-Vollmaske zum
+    // Header; der Provider kann seinen Originaldialog selbst fertig aufbauen.
+    view.setVisible(true);
+    inhalt.setBackgroundThrottling(false);
     parent.on("resize", anordnen);
     const lokaleDatei = require("node:path").join(__dirname, "anbieteransicht-leiste.html");
     lokal.setWindowOpenHandler(() => ({ action: "deny" }));
     lokal.on("will-navigate", event => event.preventDefault());
     verbinden(inhalt, provider);
     const quellen = quelleVorbereiten?.(view);
+    let vorbereitungOffen = Boolean(quellen?.vorbereiten);
     inhalt.setAudioMuted(true);
     inhalt.setWindowOpenHandler(() => ({ action: "deny" }));
     inhalt.on("will-prevent-unload", event => event.preventDefault());
@@ -111,6 +111,7 @@ function erstellen({ WebContentsView, eltern, sitzung, grenzen, zustandScript, m
     const abbruch = new AbortController();
     const klickKennung = "__elfixAnbieterWeiter:" + require("node:crypto").randomUUID();
     let weiterAm = 0;
+    let dokumentAm = Date.now();
     let aufloesen;
     const fertig = new Promise(resolve => { aufloesen = resolve; });
     const eintrag = { parent, lokal, inhalt, providerId: provider.id, url, fertig, anordnen,
@@ -142,22 +143,24 @@ function erstellen({ WebContentsView, eltern, sitzung, grenzen, zustandScript, m
     }
     signal?.addEventListener("abort", schliessen, { once: true });
     const gueltig = () => offen === eintrag && !parent.isDestroyed() && !geschlossen && !abbruch.signal.aborted && !signal?.aborted;
-    const maskieren = async () => {
+    const maskieren = async (vorbereiten = vorbereitungOffen) => {
       if (!maskeScript || !gueltig() || !bereit) return;
       const stand = generation;
-      const masse = await inhalt.executeJavaScriptInIsolatedWorld(987, [{ code: maskeScript(klickKennung) }]).catch(() => false);
+      const masse = await inhalt.executeJavaScriptInIsolatedWorld(987, [{ code: maskeScript(klickKennung, vorbereiten ? "vorbereiten" : weiterAm ? "laden" : "warten") }]).catch(() => null);
       if (!gueltig() || stand !== generation || !bereit) return;
+      maskeBereit = masse?.bereit === true;
       if (masse && [masse.left, masse.top, masse.width, masse.height].every(Number.isFinite) && masse.width > 0 && masse.height > 0) {
         ausschnitt = masse;
         const erneutePruefung = weiterStand && masse.pruefung && masse.pruefung !== weiterStand.pruefung;
         if (weiterAm && (masse.fehler || erneutePruefung)) { weiterAm = 0; weiterStand = null; }
-        if (!weiterAm || masse.fehler || erneutePruefung || manuellZeigen) {
+        if (vorbereiten) anzeigen("warten");
+        else if (!weiterAm || masse.fehler || erneutePruefung) {
           anzeigen("dialog");
         } else anzeigen("laden");
         anordnen();
       } else {
         ausschnitt = null;
-        anzeigen(weiterAm ? "laden" : manuellSeite ? "seite" : "warten");
+        anzeigen(weiterAm ? "laden" : "warten");
       }
     };
     const neuMaskieren = () => { void maskieren(); };
@@ -170,7 +173,6 @@ function erstellen({ WebContentsView, eltern, sitzung, grenzen, zustandScript, m
         if (Number.isFinite(zeit) && zeit > 0 && zeit <= Date.now() + 1000) {
           weiterAm = zeit;
           weiterStand = ausschnitt;
-          manuellZeigen = false;
           if (maskeScript) anzeigen("laden");
         }
       }
@@ -179,33 +181,45 @@ function erstellen({ WebContentsView, eltern, sitzung, grenzen, zustandScript, m
       const details = [_event, ...args].find(wert => typeof wert?.message === "string");
       const meldung = details?.message ?? args[1];
       if (meldung === "__elfix:anbieter:schliessen") { schliessen(); return; }
-      if (meldung === "__elfix:anbieter:seite-zeigen" && bereit && gueltig()) {
-        manuellSeite = true;
-        inhalt.executeJavaScriptInIsolatedWorld(987, [{ code: "globalThis.__elfixAnbieterSeiteZeigen=true;globalThis.__elfixAnbieterMaskierung?.();" }])
-          .then(() => { if (gueltig()) anzeigen("seite"); }).catch(() => {});
-      }
-      if (meldung === "__elfix:anbieter:dialog-zeigen" && ausschnitt && gueltig()) {
-        manuellZeigen = true;
-        anzeigen("dialog");
-        anordnen();
-      }
     });
     const pruefe = async () => {
       if (!gueltig() || !bereit || beschaeftigt) return;
       beschaeftigt = true;
       const stand = generation;
       try {
+        if (quellen?.vorbereiten) {
+          // Auswahl-Handler koennen selbst auf einen Animationsframe warten.
+          // Dafuer muss der Provider schon aktiv, aber noch voll maskiert sein.
+          if (!maskeBereit) await maskieren(true);
+          if (!gueltig() || stand !== generation || !bereit) return;
+          const vorbereitet = await quellen.vorbereiten({ signal: abbruch.signal });
+          if (!gueltig() || stand !== generation || !bereit) return;
+          vorbereitungOffen = !vorbereitet;
+          if (!vorbereitet) { await maskieren(); return; }
+        }
+        if (!gueltig() || stand !== generation || !bereit) return;
         await maskieren();
         if (!gueltig() || stand !== generation || !bereit) return;
         if (!maskeScript) anzeigen("seite");
         const lage = await inhalt.executeJavaScript(zustandScript());
         if (!gueltig() || stand !== generation || !bereit) return;
         if (quellen) {
-          // Der Nutzer klickt selbst. Weder Token noch HTML-Freigabe ersetzen
-          // die gepruefte Quelle aus genau dieser Ansicht.
-          if (!weiterAm) return;
-          const quelle = await quellen.pruefen({ signal: abbruch.signal, seit: weiterAm });
+          // Eine echte Bestätigung bleibt manuell. Eine bereits freigegebene
+          // Session darf ohne erfundenen Weiter-Klick dieselbe Quellenprobe
+          // nutzen, wenn Auswahl, Redirect und Player-Frame belegt sind.
+          const ohneBestaetigung = !weiterAm;
+          if (ohneBestaetigung && (ausschnitt || lage?.offen !== false
+            || !await quellen.freigegeben?.({ signal: abbruch.signal }))) return;
+          if (!gueltig() || stand !== generation || !bereit) return;
+          const quelle = await quellen.pruefen({ signal: abbruch.signal, seit: weiterAm || dokumentAm, ohneBestaetigung });
           if (!quelle?.ok || !gueltig() || generation !== stand) return;
+          if (ohneBestaetigung) {
+            await maskieren();
+            const lageDanach = await inhalt.executeJavaScript(zustandScript());
+            if (!gueltig() || stand !== generation || !bereit || ausschnitt || lageDanach?.offen !== false
+              || !await quellen.freigegeben?.({ signal: abbruch.signal, quelle })) return;
+            if (!gueltig() || stand !== generation || !bereit) return;
+          }
           const wechseln = herstellen => {
             if (!gueltig()) return null;
             signal?.removeEventListener("abort", schliessen);
@@ -251,8 +265,9 @@ function erstellen({ WebContentsView, eltern, sitzung, grenzen, zustandScript, m
     lokal.on("before-input-event", taste);
     inhalt.on("did-start-navigation", (_event, _url, inPlace, hauptrahmen) => {
       if (hauptrahmen && !inPlace) {
-        generation++; bereit = false; manuellSeite = false;
-        ausschnitt = null; anzeigen(weiterAm ? "laden" : "warten");
+        generation++; bereit = false; vorbereitungOffen = Boolean(quellen?.vorbereiten);
+        dokumentAm = Date.now();
+        ausschnitt = null; maskeBereit = false; anzeigen(weiterAm ? "laden" : "warten");
       }
     });
     inhalt.on("dom-ready", () => { bereit = true; void pruefe(); });

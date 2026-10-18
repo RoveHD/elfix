@@ -8,7 +8,7 @@
   <style>
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
-    html, body { margin: 0; background: #0b111a; color: #c2cfdf; font: 13px 'Segoe UI', sans-serif; }
+    html, body { margin: 0; overflow: hidden; background: #0b111a; color: #c2cfdf; font: 13px 'Segoe UI', sans-serif; }
     header { height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 14px 0 18px; border-bottom: 1px solid #2d3b4d; }
     .marke { color: #f2f6fc; font-size: 13px; font-weight: 700; letter-spacing: 2px; }
     .seite { margin-left: 16px; color: #9aabc1; }
@@ -27,25 +27,18 @@
   </style>
 </head>
 <body data-phase="warten">
-  <header><div><span class="marke">ELFIX</span><span class="seite">Anbieterseite</span></div><button id="zurueckZumPlayer" type="button"><span aria-hidden="true">←</span>Zurück zum Player</button></header>
+  <header><div><span class="marke">ELFIX</span><span class="seite">Bestätigung</span></div><button id="zurueckZumPlayer" type="button">Abbrechen</button></header>
   <main id="anbieterStatus" role="status" aria-live="polite" aria-busy="true">
     <h1 id="anbieterStatusTitel">Bestätigung wird vorbereitet …</h1>
     <div class="ladeleiste" role="progressbar" aria-label="Wird geladen"></div>
-    <p id="anbieterStatusHinweis">Du kannst jederzeit zum Player zurückkehren.</p>
-    <button id="anbieterDialogAnzeigen" type="button" hidden>Bestätigung anzeigen</button>
-    <button id="anbieterSeiteAnzeigen" type="button" hidden>Anbieterseite anzeigen</button>
   </main>
   <script>
-    globalThis.anbieterStatusSetzen = (phase, dialogVorhanden, seiteBereit) => {
+    globalThis.anbieterStatusSetzen = phase => {
       document.body.dataset.phase = phase;
       document.getElementById('anbieterStatus').hidden = phase === 'dialog' || phase === 'seite';
       document.getElementById('anbieterStatusTitel').textContent = phase === 'laden' ? 'Video wird geladen …' : 'Bestätigung wird vorbereitet …';
-      document.getElementById('anbieterDialogAnzeigen').hidden = phase !== 'laden' || !dialogVorhanden;
-      document.getElementById('anbieterSeiteAnzeigen').hidden = phase !== 'warten' || !seiteBereit || dialogVorhanden;
     };
     document.getElementById('zurueckZumPlayer').addEventListener('click', () => console.log('__elfix:anbieter:schliessen'));
-    document.getElementById('anbieterDialogAnzeigen').addEventListener('click', () => console.log('__elfix:anbieter:dialog-zeigen'));
-    document.getElementById('anbieterSeiteAnzeigen').addEventListener('click', () => console.log('__elfix:anbieter:seite-zeigen'));
   </script>
 </body>
 </html>

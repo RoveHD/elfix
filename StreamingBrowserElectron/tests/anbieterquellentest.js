@@ -2,6 +2,8 @@
 const assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), vm = require("node:vm");
 const direktquelle = require("../src/direktquelle"), direktlauf = require("../src/direktlauf");
 const direktbeobachtung = require("../src/direktbeobachtung"), streamspur = require("../src/streamspur");
+const direktlinks = require("../src/direktlinks"), fassung = require("../src/fassung");
+const taste = require("../src/taste"), watchpartySync = require("../src/watchparty-sync");
 const main = fs.readFileSync(path.join(__dirname, "../src/main.js"), "utf8").replace(/\r\n/g, "\n");
 const funktion = name => { const start = main.search(new RegExp("(?:async )?function " + name + "\\(")); assert.ok(start >= 0, name); return main.slice(start, main.indexOf("\n}", start) + 2); };
 const episode = "https://s.to/serie/test/staffel-1/episode-2", film = "https://cdn.example/film.m3u8";
@@ -11,8 +13,9 @@ const de = { adresse: "https://s.to/redirect/de", hoster: "VOE", sprache: "de", 
 const en = { adresse: "https://s.to/redirect/en", hoster: "VOE", sprache: "en", sichtbar: true };
 function observer() {
   let seite = episode, lagen = [], status = 200, abrufe = 0, resolverAbrufe = 0, holen = null;
-  const view = { webContents: { id: 77, getURL: () => seite } }, signal = new AbortController();
-  const c = vm.createContext({ direktBeobachter: new Map(), Date, direktquelle, direktlauf, direktbeobachtung, streamspur,
+  let kacheln = [];
+  const view = { webContents: { id: 77, getURL: () => seite, executeJavaScript: async () => JSON.stringify(kacheln) } }, signal = new AbortController();
+  const c = vm.createContext({ direktBeobachter: new Map(), Date, URL, direktlinks, direktquelle, direktlauf, direktbeobachtung, streamspur,
     episodeIdentity: url => url.includes("episode-") ? ({}) : null, isExpectedEpisodePage: (a, b) => a === b,
     isLiveView: () => true, isKnownVideoHosterUrl: url => url.includes("voe.example"),
     providerModel: { isHttpUrl: url => /^https?:/.test(url), hostFromUrl: url => new URL(url).hostname },
@@ -24,6 +27,7 @@ function observer() {
   return { c, signal, beobachter, netz: item => c.direktBeobachter.get(77)(item),
     lesen: () => beobachter.pruefen({ signal: signal.signal, seit: 1 }),
     seite: wert => { seite = wert; }, lagen: wert => { lagen = wert; }, status: wert => { status = wert; },
+    kacheln: wert => { kacheln = wert; },
     holen: wert => { holen = wert; }, get abrufe() { return abrufe; }, get resolverAbrufe() { return resolverAbrufe; } };
 }
 function uebergabe({ generation = () => true } = {}) {
@@ -50,6 +54,60 @@ function uebergabe({ generation = () => true } = {}) {
     get oeffnungen() { return oeffnungen; }, get abgleiche() { return abgleiche; } };
 }
 async function run() {
+  // Eine Originalbestaetigung kann laenger offen sein als die Startschranke.
+  // Neuere Steuerung derselben Folge verwirft den alten Play-Befehl, nicht
+  // die weiterhin benoetigte Quelle. Dispatcher und Uebergabe sind produktiv.
+  for (const action of ["syncprepare", "syncstart"]) {
+    for (const danach of ["pause", "syncstart", "andere-folge", "abbruch"]) {
+      const befehle = [], bereit = [];
+      let quellOptionen, ladenBeenden;
+      const eintrag = { key: "serie:test", room: "probe", hostId: "host", myId: "gast" };
+      const c = vm.createContext({ taste, console, Date, watchpartySync,
+        spielerLauf: { id: 6, url: episode.replace("episode-2", "episode-1") },
+        spielerTakt: { stelle: 0, laeuft: false, at: Date.now() },
+        spielerFolgenVorbereitung: null, spielerSyncBereit: null,
+        providerViews: new Map(), watchpartyLetztesEreignis: new Map(),
+        aktiverWatchpartyRaum: () => eintrag.room, watchpartyEintrag: () => eintrag,
+        episodeIdentity: url => /episode-(\d+)/.test(url || "") ? { season: 1, episode: Number(RegExp.$1) } : null,
+        istGleicheFolge: (a, b) => a === b,
+        watchpartyPasstZurFolge: (id, url) => id === `s1e${String(url).match(/episode-(\d+)/)?.[1]}`,
+        isLiveView: () => false, spielerAnbieter: () => ({ id: "sto" }),
+        spielerBefehl: befehl => { befehle.push(befehl); return true; },
+        ohneWatchpartyFolgenwechselEcho: (_provider, _url, fn) => fn(),
+        direktFolgeSpielen: (_provider, url, options) => {
+          c.spielerLauf = { id: 7, url, laden: true, quelle: { adresse: "" } };
+          quellOptionen = options;
+          return new Promise(resolve => { ladenBeenden = resolve; });
+        },
+        watchparty: { verbunden: true, serverJetzt: () => Date.now(), abgleichen() {},
+          bereitZumStart: (_key, _room, _id, ok) => bereit.push(ok) },
+        sendToast() {}, sendWatchpartyLive() {}, wpLog() {}, tempoAusRundeSetzen() {}, fassungAusRundeSetzen: async () => {},
+        watchpartyEreignis: nachricht => ({ videoTime: nachricht.position, playing: nachricht.playing }),
+        watchpartyLaeuftDanach: nachricht => Boolean(nachricht.playing)
+      });
+      vm.runInContext(["watchpartySerienSchluessel", "spielerRundenNachrichtPasst", "spielerSteuernAusRunde",
+        "watchpartySteuerungHatZiel", "applyWatchpartyControl"].map(funktion).join("\n"), c);
+      const nachricht = { ...eintrag, action, reason: "episode-change", url: episode, episodeId: "s1e2",
+        syncId: "folge-zwei", sequenceId: 1, timestamp: Date.now(), position: 0, playing: action === "syncstart" };
+      const laedt = c.applyWatchpartyControl(nachricht);
+      assert.ok(quellOptionen?.istAktuell, "Rundenauftrag traegt die Quellen-Lebensdauer");
+      const u = uebergabe({ generation: quellOptionen.istAktuell }); await u.vorbereiten();
+      const alteLadungBeenden = ladenBeenden;
+      const neuerBefehl = c.applyWatchpartyControl({ ...nachricht, action: ["syncstart", "andere-folge"].includes(danach) ? "syncstart" : "pause",
+        reason: "", syncId: "", sequenceId: 2, timestamp: nachricht.timestamp + 106000,
+        url: danach === "andere-folge" ? episode.replace("episode-2", "episode-3") : episode,
+        episodeId: danach === "andere-folge" ? "s1e3" : "s1e2", playing: false });
+      if (danach !== "andere-folge") await neuerBefehl;
+      if (danach === "abbruch") u.auftrag.abort();
+      const erlaubt = danach === "pause" || danach === "syncstart";
+      assert.equal(await u.uebernehmen(), erlaubt,
+        `${action}: Quellenfreigabe nach 106s und ${danach}`);
+      alteLadungBeenden({ ok: erlaubt }); await laedt;
+      if (danach === "andere-folge") { ladenBeenden({ ok: false }); await neuerBefehl; }
+      assert.equal(befehle.some(befehl => befehl.laufen === true), false, "Alter Start spielt nach neuerer Pause nicht");
+      assert.equal(bereit.includes(true), false, "Keine Bereitmeldung fuer die alte Startschranke");
+    }
+  }
   // Echte Auftragsfunktion: Folge 1 spielt noch, Folge 2 braucht eine
   // manuelle Freigabe. Der neue Ladeauftrag muss bereits vor dem Netz gelten.
   {
@@ -170,16 +228,67 @@ async function run() {
   u.einbau(async (_ergebnis, options) => { assert.equal(options.startzeit, 42); assert.equal(options.rundeWarten, true); assert.equal(options.rundeUebernehmen, true); return true; });
   assert.equal(await u.uebernehmen(), true); assert.equal(u.abgleiche, 1);
   assert.equal(u.auftrag.signal.aborted, true, "Alter Resolver wird gezielt vor der Uebernahme abgebrochen");
+  u = uebergabe(); u.lauf.rundeUebernehmen = false; await u.vorbereiten();
+  let frischerStand = 0;
+  Object.assign(u.c, { spielerRundenUebernahme: null, RUNDE_UEBERNAHME_FRIST_MS: 6000, wpLog() {},
+    watchparty: { abgleichen: () => { frischerStand++; } }, setTimeout: () => ({ unref() {} }) });
+  vm.runInContext(funktion("watchpartyZustandUebernehmen"), u.c);
+  u.einbau(async (_ergebnis, options) => {
+    assert.equal(options.rundeWarten, true, "Spaete Quelle startet nie von selbst");
+    assert.equal(options.rundeUebernehmen, true,
+      "Spaete Bestaetigung fragt auch nach ueberholter Startschranke den aktuellen Rundenstand ab");
+    u.c.spielerLauf.rundeUebernehmen = options.rundeUebernehmen;
+    return true;
+  });
+  assert.equal(await u.uebernehmen(), true);
+  assert.equal(frischerStand, 1, "Produktiver Uebernahme-Helper fragt nach der spaeten Quelle wirklich den Raumzustand ab");
 
   let frisch = [de, en];
   const w = vm.createContext({ isLiveView: () => true, direktlinks: { hosterlinkScript: () => "fixture" } });
   vm.runInContext(funktion("anbieterHosterWahl"), w);
   const view = { webContents: { executeJavaScript: async () => JSON.stringify(frisch) } };
-  assert.equal((await w.anbieterHosterWahl(view, { hoster: "VOE" }, { link: en.adresse, hosterliste: [de, en] })).link, en.adresse);
+  assert.equal(await w.anbieterHosterWahl(view, { hoster: "VOE" }, { link: de.adresse, hosterliste: [de, en] }), null,
+    "Der gewuenschte deutsche Link belegt nicht die Sprache der fremden Quelle");
+  assert.equal((await w.anbieterHosterWahl(view, { hoster: "VOE", anbieterLinks: [en.adresse] },
+    { link: de.adresse, hosterliste: [de, en] })).link, en.adresse, "Englischer Quellenbeleg wird niemals deutsch beschriftet");
   assert.equal(await w.anbieterHosterWahl(view, { hoster: "VOE" }, { hosterliste: [de, en] }), null, "Bei zwei sichtbaren Sprachen keine erste Fassung raten");
   frisch = [de, { ...en, sichtbar: false }];
   const auswahl = await w.anbieterHosterWahl(view, { hoster: "VOE" }, { hosterliste: [de, en] });
   assert.equal(auswahl.link, de.adresse); assert.ok(auswahl.hosterliste.some(eintrag => eintrag.adresse === auswahl.link));
+  // Neuer S.to-Dialog: der Linktoken steht im POST-Body statt in der URL.
+  const deutsch = { ...de, adresse: "https://s.to/r?t=frisch-de", sprache: "Deutsch" };
+  const englisch = { ...en, adresse: "https://s.to/r?t=frisch-en", sprache: "Englisch" };
+  t = observer(); t.kacheln([deutsch, englisch]);
+  t.netz({ formularToken: "frisch-de", anfrageId: 1, angefragt: true });
+  t.netz({ formularToken: "frisch-en", anfrageId: 2, angefragt: true });
+  t.netz({ adresse: "https://s.to/r", anfrageId: 2, rahmen: episode });
+  t.netz({ adresse: film, rahmen: "https://voe.example/e/test" });
+  const englischeQuelle = await t.lesen();
+  assert.ok(englischeQuelle.anbieterLinks.includes(englisch.adresse));
+  assert.ok(!englischeQuelle.anbieterLinks.includes(deutsch.adresse), "Abgebrochener deutscher POST ist kein Beleg");
+  frisch = [deutsch, englisch];
+  assert.equal((await w.anbieterHosterWahl(view, englischeQuelle,
+    { link: deutsch.adresse, hosterliste: [deutsch, englisch] })).link, englisch.adresse);
+  const tokenVm = vm.createContext({ direktBeobachter: new Map([[77, true]]), URLSearchParams, Buffer });
+  vm.runInContext(funktion("anbieterFormularToken"), tokenVm);
+  const request = { method: "POST", webContentsId: 77, uploadData: [{ bytes: Buffer.from("t=frisch%2Bde&cf-turnstile-response=privat&_token=privat") }] };
+  assert.equal(tokenVm.anbieterFormularToken(request), "frisch+de");
+  assert.equal(tokenVm.anbieterFormularToken({ ...request, webContentsId: 88 }), "");
+  assert.equal(tokenVm.anbieterFormularToken({ ...request, method: "GET" }), "");
+
+  const wunschVm = vm.createContext({ fassung, direktlinks, fassungSchluesselFuer: () => "serie", loadFassungen: () => ({}),
+    rundenFassungFuer: () => null });
+  vm.runInContext(["fassungsname", "linkFuerFassung", "anbieterWunschWahl"].map(funktion).join("\n"), wunschVm);
+  const lauf = { link: deutsch.adresse, hosterliste: [deutsch, englisch] };
+  assert.equal(wunschVm.anbieterWunschWahl({}, episode, lauf).sprache, "Deutsch");
+  assert.equal(wunschVm.anbieterWunschWahl({}, episode, lauf, { hosterWahl: englisch }).sprache, "Englisch");
+  wunschVm.rundenFassungFuer = () => ({ fassung: "Englisch", hoster: "VOE" });
+  assert.equal(wunschVm.anbieterWunschWahl({}, episode, { hosterliste: [deutsch, englisch] }).sprache, "Englisch");
+  wunschVm.rundenFassungFuer = () => null;
+  wunschVm.loadFassungen = () => ({ serie: { key: "Englisch", roh: "Englisch" } });
+  assert.equal(wunschVm.anbieterWunschWahl({}, episode, { hosterliste: [deutsch, englisch] }).sprache, "Englisch");
+  assert.equal(wunschVm.anbieterWunschWahl({}, episode, { hosterliste: [] }, {}, [deutsch, englisch]).sprache, "Englisch",
+    "Frische Kacheln setzen die gemerkte Fassung auch bei leerer Werkbank um");
   console.log("OK Anbieterquelle: neue DOM-/Netzbelege, Werbefilter, Folgen-/Auftrags-/Queuegrenzen, servergepruefte Uebergabe und eindeutige Fassung");
 }
 run().catch(error => { console.error(error); process.exitCode = 1; });

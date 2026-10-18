@@ -75,6 +75,7 @@ app.whenReady().then(async () => {
       #player-prepare-turnstile,#player-prepare-altcha{display:flex;justify-content:center;height:66px;margin-bottom:16px}
       #player-prepare-error{color:#fb8a8a;font-size:14px;margin-bottom:14px}button{width:100%;padding:12px;border:0;border-radius:6px;background:#629a75;color:white;font:16px Arial}
       </style></head><body><header id="aussen">POSTER UND ANBIETER-NAVIGATION</header><aside>HOSTERLISTE DARF NICHT SICHTBAR SEIN</aside>
+      <button class="link-box active" data-play-url="/redirect/123?t=fixture-token" data-provider-name="VOE" data-lang-key="de" data-language-label="Deutsch">Deutsch VOE</button>
       <iframe id="player-iframe" name="player-iframe"></iframe>
       <div class="modal fade show" id="playerPrepareModal" tabindex="-1" aria-labelledby="playerPrepareModalLabel" aria-hidden="false">
         <div class="modal-dialog modal-dialog-centered"><div class="modal-content border-secondary">
@@ -127,6 +128,7 @@ app.whenReady().then(async () => {
     },
     sanitizePositiveNumber: zahl => Math.max(0, Number(zahl) || 0),
     watchpartyLiveKeyForUrl: () => "fixture", watchpartyRaumForUrl: () => "gleiche-runde", isContentFullscreen: false,
+    anbieterWunschWahl: (_provider, _url, lauf, _optionen, frisch) => frisch.find(eintrag => eintrag.adresse === lauf.link),
     watchpartyZustandUebernehmen: url => abgleiche.push(url),
     direktSpielerOeffnen: async (_provider, url, ergebnis, optionen) => {
       commitWartet = true;
@@ -137,11 +139,16 @@ app.whenReady().then(async () => {
       await player.webContents.executeJavaScript(`window.freigegebeneQuelle=${JSON.stringify(ergebnis.quelle.adresse)}`);
       return true;
     }, anbieterAbruf: (url, options) => browserSession.fetch(url, options),
-    istCloudflareAbfrage: () => false, AbortController, AbortSignal, URL, Date
+    istCloudflareAbfrage: () => false, AbortController, AbortSignal, URL, URLSearchParams, Buffer, Date
   });
-  vm.runInContext(["direktAuftragBeginnen", "anbieterQuelleBeobachten", "anbieterSeiteOeffnen", "anbieterHosterWahl"].map(funktion).join("\n"), c);
+  vm.runInContext(["direktAuftragBeginnen", "anbieterQuelleBeobachten", "anbieterSeiteOeffnen", "anbieterHosterWahl", "anbieterFormularToken", "anbieterAnfrageErfassen"].map(funktion).join("\n"), c);
+  browserSession.webRequest.onBeforeRequest((details, callback) => {
+    c.anbieterAnfrageErfassen(details);
+    callback({});
+  });
   browserSession.webRequest.onResponseStarted(details => {
-    if (details.statusCode >= 200 && details.statusCode < 400) c.direktBeobachter.get(details.webContentsId)?.({ adresse: details.url, rahmen: details.frame?.url || details.referrer || "" });
+    if (details.statusCode >= 200 && details.statusCode < 400) c.direktBeobachter.get(details.webContentsId)?.({ adresse: details.url,
+      anfrageId: details.id, rahmen: details.frame?.url || details.referrer || "" });
   });
   const inhalt = () => webContents.getAllWebContents().find(inhalt => inhalt.session === browserSession && !inhalt.isDestroyed());
   const phase = win => win.executeJavaScript("document.body.dataset.phase");
@@ -153,10 +160,10 @@ app.whenReady().then(async () => {
     c.direktLaden.abort(); c.direktLaden = new AbortController();
     const url = basis + "/episode?mode=" + mode;
     c.spielerLauf = { id: 1, providerId: "sto", url, quelle: { adresse: "" }, startzeit: 37,
-      rundeWarten: true, rundeUebernehmen: true, hoster: "VOE", link: basis + "/redirect/123",
-      hosterliste: [{ adresse: basis + "/redirect/123", hoster: "VOE", sprache: "de" }] };
+      rundeWarten: true, rundeUebernehmen: true, hoster: "VOE", link: basis + "/redirect/123?t=fixture-token",
+      hosterliste: [{ adresse: basis + "/redirect/123?t=fixture-token", hoster: "VOE", sprache: "de" }] };
     const fertig = c.anbieterSeiteOeffnen(provider, url, c.direktLaden.signal);
-    assert.equal(ansichten.at(-1).getVisible(), false, "Provider bleibt vor fertiger Maske und erstem lokalen Paint nativ verborgen");
+    assert.equal(ansichten.at(-2).getBounds().height, parent.getContentSize()[1], "Lokale Vollabdeckung steht vor dem ersten Provider-Paint");
     const win = parent, decke = ansichten.at(-2), leiste = decke.webContents;
     if (["unbekannt", "spaet"].includes(mode)) await warte(() => inhalt().executeJavaScript("Boolean(document.getElementById('__elfixAnbieterAbdeckung'))"));
     else await bereit(leiste);
@@ -253,19 +260,18 @@ app.whenReady().then(async () => {
   assert.equal(await offen.seite.executeJavaScript("getComputedStyle(document.getElementById('playerPrepareModal')).display !== 'none'"), true,
     "Leeres Redirect-Ticket bei weiterhin sichtbarem Dialog stoppt die Quellenuebernahme nicht");
   assert.equal(await phase(offen.leiste), "laden");
-  assert.equal(offen.view.getVisible(), false, "Fremde Provideransicht nach echtem Weiter vollstaendig abgedeckt");
-  assert.equal(offen.decke.getBounds().height, parent.getContentSize()[1], "Ladeansicht deckt den ganzen Playerbereich wieder ab");
+  assert.equal(offen.view.getVisible(), true, "Provider und Iframe rendern auch nach echtem Weiter weiter");
+  assert.equal(offen.decke.getBounds().height, 52, "Lokaler Header ueberlappt den aktiven Provider-Viewport nicht");
+  assert.equal(await offen.seite.executeJavaScript("document.getElementById('__elfixAnbieterLaden')?.textContent"), "Video wird geladen …");
+  assert.equal(await offen.seite.executeJavaScript("document.elementFromPoint(innerWidth/2,innerHeight/2)?.closest('#__elfixAnbieterAbdeckung')?.id"), "__elfixAnbieterAbdeckung", "Loader deckt und blockiert den ganzen Provider");
   assert.equal(await offen.leiste.executeJavaScript("document.getElementById('anbieterStatusTitel').textContent"), "Video wird geladen …");
   assert.equal(await offen.leiste.executeJavaScript("document.querySelector('[role=progressbar]').hasAttribute('aria-valuenow')"), false,
     "Indeterminierte Ladeleiste erfindet keine Prozentwerte");
   if (process.env.ELFIX_ANBIETER_BILD === "1") await nativeBild(offen.win, path.join(__dirname, "../build/history-perf/provider-weiter/video-laden-nativ.png"));
-  await lokalKlicken(offen.leiste, "anbieterDialogAnzeigen");
-  await warte(async () => (await phase(offen.leiste)) === "dialog");
-  assert.equal(offen.view.getVisible(), true, "Lokaler Retryzugang zeigt ausschliesslich den erhaltenen Originaldialog");
+  assert.equal(await offen.leiste.executeJavaScript("document.getElementById('anbieterDialogAnzeigen') === null"), true, "Kein unbenutzbarer zweiter Bestaetigungsknopf ausserhalb des Headers");
   const eingabe = await offen.seite.executeJavaScript("window.fixtureEingabe");
   assert.equal(eingabe.trusted, true, "Echte lokale Eingabe, kein JS-click");
-  const hit = await offen.seite.executeJavaScript(`document.elementFromPoint(${eingabe.x},${eingabe.y})?.id`);
-  assert.equal(hit, "weiter", "Native Inputkoordinaten sind Viewkoordinaten, ohne 52px-Leistenoffset");
+  assert.equal(await offen.seite.executeJavaScript(`document.elementFromPoint(${eingabe.x},${eingabe.y})?.closest('#__elfixAnbieterAbdeckung')?.id`), "__elfixAnbieterAbdeckung", "Loader blockiert auch den vorherigen Weiterknopf");
   commitFreigeben(); commitFreigeben = null;
   assert.equal(await offen.fertig, "uebernommen");
   assert.equal(uebernahmen.length, 1); assert.equal(uebernahmen[0].url, offen.url);
@@ -277,8 +283,8 @@ app.whenReady().then(async () => {
   await c.fassungAusRundeSetzen("de", "VOE"); assert.equal(erneut, 0, "Gleiches Runden-Fassungsupdate startet keinen neuen Resolver");
 
   offen = await oeffnen("spaet");
-  assert.equal(offen.view.getVisible(), false, "Spaeter Dialog laesst die rohe Seite nie vorab erscheinen");
-  assert.equal(await offen.seite.executeJavaScript("document.getElementById('__elfixAnbieterAbdeckung').children.length"), 1);
+  assert.equal(await offen.seite.executeJavaScript("document.elementFromPoint(2,2)?.closest('#__elfixAnbieterAbdeckung')?.id"), "__elfixAnbieterAbdeckung", "Spaeter Dialog laesst die rohe Seite nie vorab erscheinen");
+  assert.equal(await offen.seite.executeJavaScript("Boolean(document.getElementById('__elfixAnbieterLaden'))"), true);
   const vorPaint = await offen.seite.executeJavaScript(`(async()=>{
     document.getElementById('playerPrepareModal').style.display='';
     await Promise.resolve();
@@ -304,10 +310,10 @@ app.whenReady().then(async () => {
     offen = await oeffnen(mode); const abrufe = weiterAbrufe; await klicken(offen.seite);
     await warte(() => Promise.resolve(weiterAbrufe > abrufe));
     await warte(() => offen.seite.executeJavaScript("getComputedStyle(document.querySelector('.modal')).display === 'none'"));
-    await warte(() => offen.seite.executeJavaScript("document.getElementById('__elfixAnbieterAbdeckung')?.children.length === 1"));
+    await warte(() => offen.seite.executeJavaScript("Boolean(document.getElementById('__elfixAnbieterLaden'))"));
     assert.equal(controller.offen, true); assert.equal(uebernahmen.length, 2, "HTML-Freigabe/kurze Werbung uebernimmt keinen Film");
-    assert.equal(await phase(offen.leiste), "laden"); assert.equal(offen.view.getVisible(), false,
-      "Auch ohne Quelle wird nach Weiter keine ganze Anbieter-Seite sichtbar");
+    assert.equal(await phase(offen.leiste), "laden");
+    assert.equal(await offen.seite.executeJavaScript("document.elementFromPoint(2,2)?.closest('#__elfixAnbieterAbdeckung')?.id"), "__elfixAnbieterAbdeckung", "Auch ohne Quelle bleibt die Anbieter-Seite nach Weiter voll maskiert");
     await lokalKlicken(offen.leiste, "zurueckZumPlayer"); assert.equal(await offen.fertig, "geschlossen");
   }
   for (const mode of ["fehler", "erneut"]) {
@@ -320,11 +326,9 @@ app.whenReady().then(async () => {
     controller.schliessen(); assert.equal(await offen.fertig, "geschlossen");
   }
   offen = await oeffnen("unbekannt");
-  assert.equal(offen.view.getVisible(), false, "Ohne fertigen Dialog blitzt keine Anbieterseite auf");
+  assert.equal(await offen.seite.executeJavaScript("document.elementFromPoint(2,2)?.closest('#__elfixAnbieterAbdeckung')?.id"), "__elfixAnbieterAbdeckung", "Ohne fertigen Dialog blitzt keine Anbieterseite auf");
   assert.equal(await offen.leiste.executeJavaScript("document.getElementById('anbieterStatus').hidden"), false);
-  await lokalKlicken(offen.leiste, "anbieterSeiteAnzeigen");
-  await warte(async () => (await phase(offen.leiste)) === "seite");
-  assert.equal(offen.view.getVisible(), true, "Ganze Seite ausschliesslich nach ausdruecklicher Nutzerwahl erreichbar");
+  assert.equal(await offen.leiste.executeJavaScript("document.getElementById('anbieterSeiteAnzeigen') === null"), true, "Keine Freigabe der rohen Anbieterseite");
   await lokalKlicken(offen.leiste, "zurueckZumPlayer");
   assert.equal(await offen.fertig, "geschlossen", "Lokale Rueckkehr auch ohne erkannten Dialog erreichbar");
   offen = await oeffnen("delay"); await klicken(offen.seite); await warte(() => Promise.resolve(Boolean(gehalten)));
@@ -333,6 +337,6 @@ app.whenReady().then(async () => {
   assert.equal(uebernahmen.length, 2); assert.equal(c.spielerLauf.id, 99);
   assert.equal(player.webContents.getURL(), playerUrl); assert.equal(await player.webContents.executeJavaScript("window.position"), 37);
   assert.equal(await player.webContents.executeJavaScript("window.watchparty"), "gleiche-runde");
-  console.log("OK Echter Electron: eingebetteter Originaldialog ohne neues Fenster oder Seitenblitz, Resize/ShadowDOM/FormPOST, lokaler Video-Loader/Retry/Rueckkehr, Providerfehler/erneutePruefung, servergepruefte Quellenuebergabe und Abort sicher");
+  console.log("OK Echter Electron: eingebetteter Originaldialog ohne neues Fenster oder Seitenblitz, Resize/ShadowDOM/FormPOST, lokaler Video-Loader/Rueckkehr, Providerfehler/erneutePruefung, belegte Hosterkachel und servergepruefte Quellenuebergabe, Abort sicher");
 }).then(() => ende(0), error => ende(1, error));
 function ende(code, error) { if (error) console.error(error); clearTimeout(frist); gehalten?.end(); controller?.schliessen(); if (player?.webContents && !player.webContents.isDestroyed()) player.webContents.close(); if (parent && !parent.isDestroyed()) parent.destroy(); server?.close(); app.exit(code); }
