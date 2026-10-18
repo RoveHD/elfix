@@ -195,7 +195,19 @@ app.whenReady().then(async () => {
   assert.equal(parent.contentView.children.at(-1), offen.decke, "Lokale Rueckkehrleiste liegt ueber dem vorhandenen Player");
   assert.equal(parent.contentView.children.at(-2), offen.view, "Provider liegt unter der lokalen deckenden Flaeche");
   assert.ok(parent.contentView.children.includes(player));
+  async function viewportBereit(view, width, height) {
+    // Native Bounds, Chromium-Viewport und dessen resize-Handler werden
+    // asynchron zugestellt. Eine alte vorhandene Maske belegt keinen Resize.
+    await warte(async () => {
+      const bounds = view.getBounds();
+      return bounds.width === width && bounds.height === height
+        && await view.webContents.executeJavaScript(`innerWidth===${width}&&innerHeight===${height}`);
+    });
+  }
   async function overlayPruefen(seite) {
+    const view = parent.contentView.children.find(view => view.webContents === seite);
+    const bounds = view.getBounds();
+    await viewportBereit(view, bounds.width, bounds.height);
     // Native Bounds und der DOM-Resize werden nacheinander zugestellt.
     // Die Pixelpruefung gilt fuer den tatsaechlich praesentierten Frame.
     await seite.executeJavaScript("Promise.race([new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true)))),new Promise((_,reject)=>setTimeout(()=>reject(Error('Sichtbare Anbieteransicht praesentiert keinen Frame')),5000))])");
@@ -213,7 +225,6 @@ app.whenReady().then(async () => {
     // capturePage veraendert in Electron den HiddenButPainting-Zustand und
     // kann die native Surface selbst zerstoeren. Die echten Fensterpixel
     // belegen sowohl deckende Dialogecken als auch den sichtbaren Weiterknopf.
-    const bounds = parent.contentView.children.find(view => view.webContents === seite).getBounds();
     await nativeAufnahme(parent, [
       ...pruefung.ecken.map(([x, y]) => ({ x: bounds.x + x, y: bounds.y + y, farbe: [26, 17, 11] })),
       { x: bounds.x + pruefung.weiter.x, y: bounds.y + pruefung.weiter.y, farbe: [117, 154, 98] }
@@ -228,13 +239,15 @@ app.whenReady().then(async () => {
   bereich = { x: 20, y: 40, width: 900, height: 600 };
   controller.anordnen();
   assert.deepEqual(offen.decke.getBounds(), { ...bereich, height: 52 }, "Overlay folgt exakt der eingebetteten Playerflaeche");
+  await viewportBereit(offen.view, 900, 548);
   assert.deepEqual(await offen.seite.executeJavaScript("[innerWidth,innerHeight]"), [900,548]);
   await overlayPruefen(offen.seite);
   bereich = null; controller.anordnen();
+  await viewportBereit(offen.view, parent.getContentSize()[0], parent.getContentSize()[1] - 52);
   // Kein Vorababruf, kein automatisch ausgeloester Weiter-/Captcha-Klick.
   assert.equal(weiterAbrufe, 0); assert.equal(uebernahmen.length, 0);
   offen.win.setSize(800, 650);
-  await warte(() => offen.seite.executeJavaScript("Boolean(document.getElementById('__elfixAnbieterMaske'))"));
+  await viewportBereit(offen.view, offen.win.getContentSize()[0], offen.win.getContentSize()[1] - 52);
   const resize = await offen.seite.executeJavaScript("(()=>{const r=document.getElementById('weiter').getBoundingClientRect();return r.x>=0&&r.y>=0&&r.right<=innerWidth&&r.bottom<=innerHeight})()");
   assert.equal(resize, true, "Weiter nach Resize vollstaendig erreichbar");
   assert.deepEqual(await offen.seite.executeJavaScript("[innerWidth,innerHeight]"),
