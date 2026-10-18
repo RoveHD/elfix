@@ -52,7 +52,9 @@ const playerView = {
 function buehne() {
   const handlers = new Map();
   const fensterVollbild = [];
+  const anbieterLagen = [];
   const kontext = vm.createContext({
+    anbieterSeitenAnsicht: { anordnen() { anbieterLagen.push({ ...playerView.bounds }); } },
     activeView: providerView,
     activeProviderId: "provider-a",
     attachedProviderViews: new Set(["provider-a"]),
@@ -96,11 +98,11 @@ function buehne() {
 
   vm.runInContext(handler("spieler:mini-status"), kontext);
   vm.runInContext(handler("spieler:vollbild"), kontext);
-  return { kontext, handlers, fensterVollbild };
+  return { kontext, handlers, fensterVollbild, anbieterLagen };
 }
 
 const vomPlayer = { sender: playerContents };
-const { kontext, handlers, fensterVollbild } = buehne();
+const { kontext, handlers, fensterVollbild, anbieterLagen } = buehne();
 
 // --- Hinein in den Mini-Player ----------------------------------------------
 
@@ -127,10 +129,14 @@ assert.equal(fensterVollbild.at(-1), true, "und das Fenster geht mit");
 const lage = kontext.spielerView.bounds;
 assert.equal(`${lage.x},${lage.y},${lage.width},${lage.height}`, "0,0,1600,900",
   "der Player fuellt das Bild");
+assert.deepEqual(anbieterLagen.at(-1), { x: 0, y: 0, width: 1600, height: 900 },
+  "Anbieter-Overlay wird nach den Vollbildbounds angeordnet");
 
 handlers.get("spieler:vollbild")(vomPlayer);
 assert.equal(kontext.isContentFullscreen, false, "und derselbe Knopf wieder aus");
 assert.equal(fensterVollbild.at(-1), false, "auch hier geht das Fenster mit");
+assert.deepEqual(anbieterLagen.at(-1), { x: 40, y: 80, width: 1120, height: 700 },
+  "Anbieter-Overlay folgt nach Vollbildende wieder dem Playerbereich");
 
 // --- Ohne Werkbank, aber mit Player -----------------------------------------
 //

@@ -109,10 +109,23 @@ function torScript(_maxKlicks = 4, beobachten = true) {
 // Separat vom schmalen Resolver-Tor: dessen Geometrie bleibt unveraendert.
 function dialogMaskeScript(klickKennung = "") {
   return `(() => {
+    if (globalThis.__elfixAnbieterMaskierung) return globalThis.__elfixAnbieterMaskierung();
+    const maskieren = () => {
     const kenn = 'data-elfix-anbieterdialog';
-    document.getElementById('__elfixAnbieterMaske')?.remove();
     document.getElementById('__elfixAnbieterAbdeckung')?.remove();
     document.querySelectorAll('[' + kenn + ']').forEach(el => el.removeAttribute(kenn));
+    let stil = document.getElementById('__elfixAnbieterMaske');
+    if (!stil) {
+      stil = document.createElement('style'); stil.id = '__elfixAnbieterMaske';
+      stil.textContent = '#__elfixAnbieterAbdeckung{position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important}'
+        + '#__elfixAnbieterAbdeckung>div{position:absolute!important;background:#0b111a!important;opacity:1!important;pointer-events:auto!important;margin:0!important;padding:0!important;border:0!important}';
+      (document.head || document.documentElement).appendChild(stil);
+    }
+    const abdeckung = document.createElement('div'); abdeckung.id = '__elfixAnbieterAbdeckung';
+    abdeckung.setAttribute('aria-hidden', 'true');
+    const voll = document.createElement('div'); voll.style.cssText = 'inset:0!important';
+    abdeckung.appendChild(voll);
+    document.documentElement.appendChild(abdeckung);
     const sichtbar = el => {
       if (!el?.isConnected) return false;
       const r = el.getBoundingClientRect();
@@ -159,7 +172,11 @@ function dialogMaskeScript(klickKennung = "") {
       const tor = tore.find(t => t.blockierend && begrenzt(t.kasten));
       kasten = tor?.kasten;
     }
-    if (!kasten) { globalThis.__elfixAnbieterDialog = null; return false; }
+    if (!kasten) {
+      globalThis.__elfixAnbieterDialog = null;
+      if (globalThis.__elfixAnbieterSeiteZeigen) abdeckung.replaceChildren();
+      return false;
+    }
     for (let el = kasten; el && el !== document.body; el = el.parentElement) {
       if (begrenzt(el) && weiter(el) && el.matches('dialog,[role="dialog"],.modal-content')) { kasten = el; break; }
     }
@@ -177,19 +194,14 @@ function dialogMaskeScript(klickKennung = "") {
       }, true);
     }
     kasten.setAttribute(kenn, '');
-    const stil = document.createElement('style'); stil.id = '__elfixAnbieterMaske';
     // Vier undurchsichtige Flaechen liegen auf der echten Seite. Das Loch
     // folgt dem Originaldialog; dessen DOM, Position und Stil bleiben erhalten.
-    stil.textContent = '#__elfixAnbieterAbdeckung{position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important}'
-      + '#__elfixAnbieterAbdeckung>div{position:absolute!important;background:#0b111a!important;opacity:1!important;pointer-events:auto!important;margin:0!important;padding:0!important;border:0!important}';
-    (document.head || document.documentElement).appendChild(stil);
     const neu = kasten.getBoundingClientRect();
     const links = Math.max(0, Math.min(innerWidth, neu.left));
     const rechts = Math.max(links, Math.min(innerWidth, neu.right));
     const oben = Math.max(0, Math.min(innerHeight, neu.top));
     const unten = Math.max(oben, Math.min(innerHeight, neu.bottom));
-    const abdeckung = document.createElement('div'); abdeckung.id = '__elfixAnbieterAbdeckung';
-    abdeckung.setAttribute('aria-hidden', 'true');
+    abdeckung.replaceChildren();
     for (const [x,y,w,h] of [[0,0,innerWidth,oben],[0,unten,innerWidth,innerHeight-unten],
       [0,oben,links,unten-oben],[rechts,oben,innerWidth-rechts,unten-oben]]) {
       const flaeche = document.createElement('div');
@@ -204,7 +216,6 @@ function dialogMaskeScript(klickKennung = "") {
       + 'border-radius:'+getComputedStyle(kasten).borderRadius+'!important;'
       + 'box-shadow:0 0 0 '+Math.max(innerWidth,innerHeight)+'px #0b111a!important;';
     abdeckung.appendChild(rundung);
-    document.documentElement.appendChild(abdeckung);
     const fehler = kasten.querySelector('#player-prepare-error,[role="alert"],.alert-danger');
     const pruefung = Array.from(kasten.querySelectorAll('#player-prepare-turnstile,#player-prepare-altcha,.cf-turnstile,.h-captcha,.g-recaptcha'))
       .filter(el => { const s=getComputedStyle(el);return s.display!=='none'&&s.visibility!=='hidden'; }).map(el => el.id || el.className).join('|');
@@ -212,6 +223,16 @@ function dialogMaskeScript(klickKennung = "") {
       viewportWidth: innerWidth, viewportHeight: innerHeight,
       fehler: fehler && getComputedStyle(fehler).display !== 'none' ? String(fehler.innerText || fehler.textContent || '').trim() : '',
       pruefung };
+    };
+    globalThis.__elfixAnbieterMaskierung = maskieren;
+    // DOM-Umbauten, Dialogschluss und Groessenaenderungen werden vor dem
+    // naechsten Paint maskiert, nicht erst beim 400-ms-Hauptprozess-Poll.
+    const beobachter = new MutationObserver(maskieren);
+    if (document.body) beobachter.observe(document.body, { childList: true, subtree: true,
+      attributes: true, attributeFilter: ['class','style','hidden','open'] });
+    addEventListener('resize', maskieren);
+    addEventListener('scroll', maskieren, true);
+    return maskieren();
   })()`;
 }
 

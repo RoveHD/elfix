@@ -46,7 +46,9 @@ const mainWindow = {
   webContents: { send() {} }
 };
 
+let anbieterAnordnungen = 0;
 const context = vm.createContext({
+  anbieterSeitenAnsicht: { anordnen() { anbieterAnordnungen++; } },
   watchpartySync,
   activeView: providerView,
   activeProviderId: "provider-a",
@@ -137,6 +139,7 @@ assert.equal(uuidCalls, 1, "PiP erzeugt keine neue Session und keinen Ghost");
 
 handlers.get("spieler:mini-status")(sender, false, false);
 assert.equal(context.spielerMiniAktiv, false, "PiP ist wieder aus");
+assert.ok(anbieterAnordnungen > 0, "Rueckkehr ordnet auch die Anbieter-Overlayflaeche am Player an");
 assert.equal(context.spielerLauf, playerRun, "Rückkehr baut den Player nicht neu");
 assert.equal(context.activeFavoriteId, favorite.id, "Rückkehr behält dieselbe Runde");
 assert.deepEqual(leaves, [], "auch die Rückkehr meldet keinen Leave");

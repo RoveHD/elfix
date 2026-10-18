@@ -738,6 +738,7 @@ function queueUebernimmt() {
 let offeneStaffel = 0;
 /** Solange ein Wechsel laeuft, darf kein zweiter angestossen werden. */
 let wechselLaeuft = false;
+let wechselAnfrage = null;
 /** Ob die gespeicherte Stelle fuer diesen Auftrag schon angesprungen wurde. */
 let startGesetzt = false;
 /**
@@ -1874,6 +1875,8 @@ function spoilerSchalterZeichnen(regel) {
  */
 async function folgeWechseln(url) {
   if (!url || wechselLaeuft) return;
+  const anfrage = { url, ladeId: null };
+  wechselAnfrage = anfrage;
   wechselLaeuft = true;
   weiterAbbrechen();
   standMelden(true);
@@ -1881,7 +1884,11 @@ async function folgeWechseln(url) {
   // sich nach ihm (und der Knopf in der Mitte nach beiden).
   fehlerKasten.hidden = true;
   pufferZeigen(true);
-  const ergebnis = await bruecke.wechseln(url);
+  let ergebnis;
+  try { ergebnis = await bruecke.wechseln(url); }
+  catch { ergebnis = { ok: false }; }
+  if (wechselAnfrage !== anfrage) return;
+  wechselAnfrage = null;
   wechselLaeuft = false;
   if (!ergebnis || !ergebnis.ok) {
     aufgeben(ergebnis?.grund || "Die Folge ließ sich nicht öffnen.", "wechsel");
@@ -2020,6 +2027,8 @@ function fassungWechseln(name) {
 
 async function hosterWechseln(link) {
   if (!quellenWechselErlaubt() || !link || wechselLaeuft) return;
+  const anfrage = { url: auftrag?.url, ladeId: null };
+  wechselAnfrage = anfrage;
   wechselLaeuft = true;
   const stelle = Number(bild.currentTime) || 0;
   standMelden(true);
@@ -2027,7 +2036,11 @@ async function hosterWechseln(link) {
   // sich nach ihm (und der Knopf in der Mitte nach beiden).
   fehlerKasten.hidden = true;
   pufferZeigen(true);
-  const ergebnis = await bruecke.hoster(link, stelle);
+  let ergebnis;
+  try { ergebnis = await bruecke.hoster(link, stelle); }
+  catch { ergebnis = { ok: false }; }
+  if (wechselAnfrage !== anfrage) return;
+  wechselAnfrage = null;
   wechselLaeuft = false;
   if (!ergebnis || !ergebnis.ok) {
     aufgeben(ergebnis?.grund || "Dieser Hoster gibt nichts her.", "hosterwechsel");
@@ -2536,6 +2549,7 @@ bild.addEventListener("error", () => {
  * einem Wechsel der Quelle) den Film wieder zurueck.
  */
 bild.addEventListener("loadedmetadata", async () => {
+  if (!auftrag?.adresse || auftrag.laden || auftrag.auswahl) return;
   skipNachladen();
   const meineQuellenGeneration = quellenGeneration;
   anzeigeDauer.textContent = zeit(bild.duration);
@@ -2832,12 +2846,20 @@ function hlsAnkerErzeugen(instanz) {
  */
 function starten(neuerAuftrag) {
   ++quellenGeneration;
+  wechselLaeuft = false;
   videoUpscaler?.setzeAktiv(false);
   reglerGefasst = false;
   spulVorschauVerbergen();
   spulVorschau.quelle({});
   vorschauQuelle = "";
   auftrag = neuerAuftrag || {};
+  // Genau der erste passende Ladeauftrag gehoert noch zur offenen Anfrage.
+  // Eine weitere Auswahl oder eine fertige Quelle macht deren Antwort alt.
+  if (wechselAnfrage) {
+    if (auftrag.laden && auftrag.url === wechselAnfrage.url
+      && (wechselAnfrage.ladeId === null || wechselAnfrage.ladeId === auftrag.id)) wechselAnfrage.ladeId = auftrag.id;
+    else wechselAnfrage = null;
+  }
   hosterSeiteBedienung.hidden = Boolean(auftrag.adresse);
   knopfHosterSeite.disabled = false;
   hosterSeiteHinweis.hidden = true;
@@ -2915,6 +2937,7 @@ function starten(neuerAuftrag) {
   // damit die Flaeche nicht leer bleibt, waehrend im Hintergrund die Seite
   // geladen und die Adresse aufgeloest wird.
   if (auftrag.laden) {
+    folgenPanel.hidden = true;
     pufferZeigen(true);
     document.getElementById("hoster").textContent = "Quelle wird gesucht …";
     return;

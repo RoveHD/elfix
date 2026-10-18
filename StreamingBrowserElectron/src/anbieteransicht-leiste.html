@@ -33,16 +33,19 @@
     <div class="ladeleiste" role="progressbar" aria-label="Wird geladen"></div>
     <p id="anbieterStatusHinweis">Du kannst jederzeit zum Player zurückkehren.</p>
     <button id="anbieterDialogAnzeigen" type="button" hidden>Bestätigung anzeigen</button>
+    <button id="anbieterSeiteAnzeigen" type="button" hidden>Anbieterseite anzeigen</button>
   </main>
   <script>
-    globalThis.anbieterStatusSetzen = (phase, dialogVorhanden) => {
+    globalThis.anbieterStatusSetzen = (phase, dialogVorhanden, seiteBereit) => {
       document.body.dataset.phase = phase;
       document.getElementById('anbieterStatus').hidden = phase === 'dialog' || phase === 'seite';
       document.getElementById('anbieterStatusTitel').textContent = phase === 'laden' ? 'Video wird geladen …' : 'Bestätigung wird vorbereitet …';
       document.getElementById('anbieterDialogAnzeigen').hidden = phase !== 'laden' || !dialogVorhanden;
+      document.getElementById('anbieterSeiteAnzeigen').hidden = phase !== 'warten' || !seiteBereit || dialogVorhanden;
     };
-    document.getElementById('zurueckZumPlayer').addEventListener('click', () => window.close());
+    document.getElementById('zurueckZumPlayer').addEventListener('click', () => console.log('__elfix:anbieter:schliessen'));
     document.getElementById('anbieterDialogAnzeigen').addEventListener('click', () => console.log('__elfix:anbieter:dialog-zeigen'));
+    document.getElementById('anbieterSeiteAnzeigen').addEventListener('click', () => console.log('__elfix:anbieter:seite-zeigen'));
   </script>
 </body>
 </html>

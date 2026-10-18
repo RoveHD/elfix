@@ -15,8 +15,8 @@ app.whenReady().then(async()=>{
  await win.loadURL("data:text/html,<body style='background:%23111;color:white'><h1>ELFIX Navigationstest</h1><p id='route'>Player</p></body>");
  view=new WebContentsView({webPreferences:{preload:path.join(__dirname,"../src/spieler-preload.js"),sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false,autoplayPolicy:"no-user-gesture-required"}});
  win.contentView.addChildView(view);view.setBounds({x:0,y:0,width:1100,height:720});view.webContents.setAudioMuted(true);
- let closes=0,pauses=0,blurRuns=0;
- const c=vm.createContext({mainWindow:win,sprachchatFenster:null,anbieterSeitenAnsicht:{fokussiert:false},spielerView:view,spielerLauf:{id:1,session:"same"},spielerMiniAktiv:false,spielerMiniVorbereitung:false,spielerAutoMiniAusstehend:null,
+ let closes=0,pauses=0,blurRuns=0,anbieterAnordnungen=0;
+ const c=vm.createContext({mainWindow:win,sprachchatFenster:null,anbieterSeitenAnsicht:{fokussiert:false,anordnen(){anbieterAnordnungen++;}},spielerView:view,spielerLauf:{id:1,session:"same"},spielerMiniAktiv:false,spielerMiniVorbereitung:false,spielerAutoMiniAusstehend:null,
  settings:{playback:{pauseOnMinimize:true,pauseOnBlur:true}},isContentFullscreen:false,browserBounds:{x:0,y:0,width:1100,height:720},
  isLiveView:v=>Boolean(v&&!v.webContents.isDestroyed()),clamp:(v,a,b)=>Math.max(a,Math.min(b,v)),providerViews:new Map(),attachedProviderViews:new Set(),overlayReasons:new Set(),
  activeView:null,activeProviderId:null,activeFavoriteId:null,providers:[],webContentsProvider:new Map(),providerResumeState:new Map(),sendActiveState:()=>{},folgenWerkbaenkeSchliessen:()=>{},
@@ -37,6 +37,7 @@ app.whenReady().then(async()=>{
  for(const route of ["Startseite","Suche","Mediathek"]){await c.enterHomeMode();await win.webContents.executeJavaScript(`document.getElementById('route').textContent=${JSON.stringify(route)}`);assert.equal(await win.webContents.executeJavaScript("document.getElementById('route').textContent"),route);assert.equal(c.spielerLauf.session,"same");assert.equal(view.getVisible(),false);assert.equal(closes,0);}
  await sleep(350);assert.ok(await js("bild.currentTime")>before,"Video laeuft waehrend Navigation weiter");assert.equal(await js("document.pictureInPictureElement===bild"),true);
  await js("miniUmschalten()",true);await until(()=>Promise.resolve(!c.spielerMiniAktiv));assert.equal(view.getVisible(),true);
+ assert.ok(anbieterAnordnungen>0,"Rueckkehr ordnet Anbieter-Overlay nach Playerbounds an");
  // Fullscreen and closing PiP while still minimized use the real native lifecycle too.
  c.isContentFullscreen=true;win.setFullScreen(true);await until(()=>Promise.resolve(win.isFullScreen()));
  await js("bild.play()");win.minimize();await until(()=>js("document.pictureInPictureElement===bild"));
@@ -58,11 +59,11 @@ app.whenReady().then(async()=>{
  win.focus();await until(()=>Promise.resolve(win.isFocused()));
  c.sprachchatFenster=null;
  const providerBlur=blurRuns;
- c.anbieterSeitenAnsicht={get fokussiert(){return voiceWin.isFocused();}};
+ c.anbieterSeitenAnsicht={get fokussiert(){return voiceWin.isFocused();},anordnen(){anbieterAnordnungen++;}};
  voiceWin.focus();await until(()=>Promise.resolve(voiceWin.isFocused()&&blurRuns>providerBlur));
  assert.equal(pauses,voicePauses,"Eigene Anbieteransicht darf das Video nicht pausieren");
  win.focus();await until(()=>Promise.resolve(win.isFocused()));
- c.anbieterSeitenAnsicht={fokussiert:false};
+ c.anbieterSeitenAnsicht={fokussiert:false,anordnen(){anbieterAnordnungen++;}};
  const outsideBlur=blurRuns;
  voiceWin.focus();await until(()=>Promise.resolve(voiceWin.isFocused()&&blurRuns>outsideBlur));
  assert.equal(pauses,voicePauses+1,"Fremdes Fenster pausiert weiterhin bei eingeschaltetem pauseOnBlur");

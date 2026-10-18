@@ -44,12 +44,76 @@ function uebergabe({ generation = () => true } = {}) {
     }, watchpartyZustandUebernehmen: () => { abgleiche++; }, AbortController, AbortSignal });
   vm.runInContext(["direktAuftragBeginnen", "anbieterSeiteOeffnen"].map(funktion).join("\n"), c);
   return { c, lauf, auftrag,
-    async vorbereiten() { await c.anbieterSeiteOeffnen({ id: "sto" }, episode, auftrag.signal); },
+    async vorbereiten() { await c.anbieterSeiteOeffnen({ id: "sto" }, episode, c.direktLaden.signal); },
     uebernehmen: () => optionen.quelleUebernehmen(quelle, { signal: new AbortController().signal, wechseln: factory => factory() }),
     wahl: fn => { waehlen = fn; }, einbau: fn => { einbauen = fn; },
     get oeffnungen() { return oeffnungen; }, get abgleiche() { return abgleiche; } };
 }
 async function run() {
+  // Echte Auftragsfunktion: Folge 1 spielt noch, Folge 2 braucht eine
+  // manuelle Freigabe. Der neue Ladeauftrag muss bereits vor dem Netz gelten.
+  {
+    const u = uebergabe();
+    const alt = episode.replace("episode-2", "episode-1");
+    Object.assign(u.c, {
+      spielerLauf: { ...u.lauf, url: alt, quelle: { adresse: "https://cdn.example/alte-folge.m3u8" } },
+      spielerTakt: { stelle: 913, laeuft: true }, spielerAuftragId: 7,
+      spielerCfAbbrechen() {}, spielerCfVersuche: new Map(), spielerCfErfolgGemeldet: new Set(), spielerCfWeiterhinGemeldet: new Set(),
+      geraeteWiedergabeMelden() {}, favorites: [], activeFavoriteId: null, normalizeFavoriteUrl: value => value,
+      naechsteFolgeLabel: (_provider, url) => url, spielerRtxStop() {}, console: { log() {} },
+      watchpartyAdresseFuerProvider: (_provider, url) => url, merkeGeoeffneteFolge() {},
+      providerModel: { isHttpUrl: url => /^https?:/.test(url) },
+      rundenFassungFuer: () => null, linkFuerFassung: () => null, direktFallbackErfolg() {}
+    });
+    let lesenFertig, lesenBegonnen, aufloesenFertig, aufloesenBegonnen;
+    const liest = new Promise(resolve => { lesenBegonnen = resolve; });
+    const loest = new Promise(resolve => { aufloesenBegonnen = resolve; });
+    u.c.werkbankLesen = () => new Promise(resolve => { lesenFertig = resolve; lesenBegonnen(); });
+    u.c.direktQuelleFuerAnsicht = () => new Promise(resolve => { aufloesenFertig = resolve; aufloesenBegonnen(); });
+    u.c.direktFallbackStarten = (provider, url, signal, optionen) => {
+      u.c.direktAnbieterFallback.aktuell = { provider, url, signal, optionen }; return u.c.direktAnbieterFallback.aktuell;
+    };
+    vm.runInContext(["spielerLaufSetzen", "direktFolgeSpielen"].map(funktion).join("\n"), u.c);
+    const auftraege = [];
+    u.c.direktSpielerOeffnen = async (provider, url, ergebnis, options) => {
+      if (options.signal?.aborted || (options.istAktuell && !options.istAktuell())) return false;
+      const lauf = u.c.spielerLaufSetzen(provider, url, ergebnis, options);
+      auftraege.push({ lauf, options }); return true;
+    };
+    const wechsel = u.c.direktFolgeSpielen({ id: "sto" }, episode, { startzeit: 0, rundeWarten: true });
+    await liest;
+    assert.equal(u.c.spielerLauf.url, episode, "Die neue Folge gilt schon vor der ersten Netzantwort");
+    assert.equal(u.c.spielerLauf.quelle.adresse, "", "Der neue Auftrag enthaelt niemals die alte Videoquelle");
+    assert.equal(u.c.spielerLauf.laden, true); assert.equal(u.c.spielerTakt.stelle, 0);
+    assert.equal(u.c.spielerLauf.startzeit, 0); assert.equal(u.c.spielerLauf.rundeWarten, true);
+    const ladeLauf = u.c.spielerLauf;
+    lesenFertig({ view: {}, links: [de, en] }); await loest;
+    assert.equal(u.c.spielerLauf, ladeLauf, "Kachellesen ersetzt den offenen Bestaetigungsauftrag nicht");
+    assert.equal(u.c.spielerLauf.hosterliste[0].adresse, de.adresse);
+    await u.vorbereiten();
+    assert.equal(await u.uebernehmen(), true);
+    assert.equal(u.c.spielerLauf.url, episode); assert.equal(u.c.spielerLauf.quelle.adresse, film);
+    assert.equal(u.c.spielerLauf.startzeit, 0, "913s der alten Folge werden nicht uebernommen");
+    assert.equal(u.c.spielerLauf.rundeWarten, true); assert.equal(u.abgleiche, 1);
+    aufloesenFertig({ ok: false, grund: "VOE: Keine spielbare Quelle beobachtet" });
+    assert.equal((await wechsel).abgebrochen, true, "Spaeter Resolverfehler wird nach Quellencommit verworfen");
+    assert.equal(auftraege.length, 2, "Genau Ladeauftrag und gepruefte neue Quelle werden eingebaut");
+  }
+  {
+    let ersatz = 0, bestaetigungsAuftrag;
+    const c = vm.createContext({
+      direktModus: () => true, providerModel: { isHttpUrl: () => true },
+      direktFallbackStarten: () => ({}), werkbankLesen: async () => [de],
+      console: { log() {} }, kurzeUrl: value => value, sendToast() {}, seiteGleich: (a, b) => a === b,
+      direktSpielerOeffnen: async (provider, url) => { c.spielerLauf = { id: 12, providerId: provider.id, url, laden: true }; return true; },
+      direktFolgeSpielen: async () => { bestaetigungsAuftrag = c.spielerLauf; return { ok: false, grund: "VOE: Keine spielbare Quelle beobachtet" }; },
+      direktAuswahlOeffnen: async () => { ersatz++; return { ok: true }; }
+    });
+    vm.runInContext(funktion("direktUebernehmen"), c);
+    await c.direktUebernehmen({ id: "sto" }, episode, new AbortController().signal);
+    assert.equal(ersatz, 0, "S.to-Fehler ersetzt keinen bereits bestaetigbaren Ladeauftrag durch eine neue ID");
+    assert.equal(c.spielerLauf, bestaetigungsAuftrag);
+  }
   let t = observer(); t.netz({ adresse: film, rahmen: episode, vonWerbung: true });
   assert.equal(await t.lesen(), null, "Werbeherkunft bleibt auch bei langer gueltiger Playlist verworfen");
   t = observer(); t.status(403); t.netz({ adresse: film, rahmen: episode });

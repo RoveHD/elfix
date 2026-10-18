@@ -106,7 +106,7 @@ async function run() {
   // Quelle beendet sie vor jedwedem anschliessenden Player-/Rundenwarten.
   for (const quelleGefunden of [false, true]) {
     t = aufbau();
-    const d = vm.createContext({ direktAnbieterFallback: t.fallback,
+    const d = vm.createContext({ direktAnbieterFallback: t.fallback, spielerLauf: null,
       isStoProviderLike: provider => provider.id === "sto", episodeIdentity: () => true,
       providerModel: { isHttpUrl: () => true }, watchpartyAdresseFuerProvider: (_provider, adresse) => adresse,
       merkeGeoeffneteFolge() {}, getProviderView: () => ({}), rundenFassungFuer: () => null,

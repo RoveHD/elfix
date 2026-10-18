@@ -62,13 +62,17 @@ app.whenReady().then(async () => {
   const playerUrl = player.webContents.getURL();
   let geladen = 0;
   player.webContents.on("did-start-navigation", () => geladen++);
-  const fenster = [];
-  const seite = win => win.contentView.children.find(view => view.webContents?.session === browserSession).webContents;
-  const seiteBereit = win => seite(win).executeJavaScript("Boolean(window.__anbieterProben)");
+  const decken = [];
+  const seite = win => parent.contentView.children.find(view => view.webContents?.session === browserSession).webContents;
+  const seiteBereit = win => parent.contentView.children.some(view => view.webContents?.session === browserSession)
+    && seite(win).executeJavaScript("Boolean(window.__anbieterProben)");
   let pruefungen = 0;
   controller = ansicht.erstellen({
-    BrowserWindow: function (options) { const win = new BrowserWindow(options); fenster.push(win); return win; },
-    WebContentsView,
+    WebContentsView: function(options) {
+      const view = new WebContentsView(options);
+      if (!options.webPreferences.session) decken.push(view);
+      return view;
+    },
     eltern: () => parent, sitzung: () => browserSession,
     zustandScript: () => `(window.__anbieterProben=(window.__anbieterProben||0)+1,${tor.zustandScript()})`,
     persistieren: sitzung => sitzung.cookies.flushStore()
@@ -80,12 +84,13 @@ app.whenReady().then(async () => {
     return response.ok && (await response.text()).includes('id="freigegeben"');
   };
   let bestaetigung = controller.oeffnen(provider, url, { pruefen });
-  await warte(() => seiteBereit(fenster[0]));
+  await warte(() => seiteBereit(decken[0]));
   assert.equal(controller.offen, true);
-  const kind = fenster[0];
+  const kind = decken[0];
   const inhalt = seite(kind);
-  assert.equal(kind.getParentWindow(), parent); assert.equal(kind.isModal(), true);
-  assert.equal(kind.isVisible(), true); assert.equal(inhalt.session, browserSession);
+  assert.equal(BrowserWindow.getAllWindows().length, 1, "Kein verschiebbares Zusatzfenster");
+  assert.equal(parent.contentView.children.at(-1), kind, "Lokale Rueckkehrleiste liegt im vorhandenen Hauptfenster ueber dem Player");
+  assert.equal(parent.isVisible(), true); assert.equal(inhalt.session, browserSession);
   assert.ok(parent.contentView.children.includes(player), "Player bleibt eingehaengt");
   for (const selector of ["anbieterKopf", "beschreibung", "challenge-form", "anbieterFuss"]) {
     assert.equal(await inhalt.executeJavaScript(`getComputedStyle(document.getElementById(${JSON.stringify(selector)})).visibility`), "visible", selector);
@@ -106,42 +111,43 @@ app.whenReady().then(async () => {
   assert.equal(lokalPrefs.sandbox, true); assert.equal(lokalPrefs.contextIsolation, true);
   assert.equal(lokalPrefs.nodeIntegration, false); assert.ok(!lokalPrefs.preload);
   assert.equal(await leiste.executeJavaScript("typeof window.elfix"), "undefined");
-  assert.equal(kind.contentView.children.find(v => v.webContents === inhalt).getBounds().y, 52);
+  assert.equal(parent.contentView.children.find(v => v.webContents === inhalt).getBounds().y, 52);
   if (process.env.ELFIX_ANBIETER_BILD === "1") {
     // webContents.capturePage erfasst nur den lokalen Renderer, nicht seine
     // Geschwister-Views. Fuer das echte zusammengesetzte Fenster OS-Capture.
     const quellen = await desktopCapturer.getSources({ types: ["window"], fetchWindowIcons: false,
       thumbnailSize: { width: 1600, height: 1200 } });
-    const nativeAufnahme = quellen.find(quelle => quelle.id === kind.getMediaSourceId())?.thumbnail;
+    const nativeAufnahme = quellen.find(quelle => quelle.id === parent.getMediaSourceId())?.thumbnail;
     const bild = nativeAufnahme && !nativeAufnahme.isEmpty() ? nativeAufnahme : await inhalt.capturePage();
     assert.equal(bild.isEmpty(), false);
     const pfad = path.join(__dirname, "../build/history-perf/provider-overlay/anbieteransicht.png");
     fs.mkdirSync(path.dirname(pfad), { recursive: true }); fs.writeFileSync(pfad, bild.toPNG());
     console.log((nativeAufnahme ? "Screenshot Fenster: " : "OS-Aufnahme nicht verfuegbar; Screenshot Anbieter-Renderer: ") + pfad);
     if (!nativeAufnahme) {
-      const lokaleAufnahme = await leiste.capturePage({ x: 0, y: 0, width: kind.getContentSize()[0], height: 52 });
+      const lokaleAufnahme = await leiste.capturePage({ x: 0, y: 0, width: parent.getContentSize()[0], height: 52 });
       fs.writeFileSync(path.join(path.dirname(pfad), "rueckkehrleiste.png"), lokaleAufnahme.toPNG());
     }
   }
   assert.equal(controller.oeffnen(provider, url, { pruefen }), bestaetigung, "Erneuter Klick hat dasselbe Fenster und Ergebnis");
-  assert.equal(fenster.length, 1); assert.equal(pruefungen, 0, "Kein unsichtbarer Vorababruf vor dem Oeffnen");
+  assert.equal(decken.length, 1); assert.equal(pruefungen, 0, "Kein unsichtbarer Vorababruf vor dem Oeffnen");
   // Keine Fake-Bestaetigung durch Entfernen des DOMs oder blosses Schliessen.
   await inhalt.executeJavaScript("document.getElementById('challenge-form').remove()");
   await warte(() => Promise.resolve(pruefungen === 1));
   assert.equal(controller.offen, true, "Server verweigert weiterhin trotz entferntem Widget");
   await inhalt.executeJavaScript("window.onbeforeunload=()=>{return 'Seite behalten'};true");
-  kind.close(); assert.equal(await bestaetigung, "geschlossen", "Natives X uebergeht beforeunload und bestaetigt nichts");
+  controller.schliessen(); assert.equal(await bestaetigung, "geschlossen", "Schliessen entfernt nur den Overlay und bestaetigt nichts");
 
   bestaetigung = controller.oeffnen(provider, url, { pruefen });
-  const zweite = fenster[1];
+  const zweite = decken[1];
   await warte(() => seiteBereit(zweite));
   await seite(zweite).executeJavaScript("window.onbeforeunload=()=>{return 'Seite behalten'};true");
-  seite(zweite).sendInputEvent({ type: "keyDown", keyCode: "ESC" });
-  seite(zweite).sendInputEvent({ type: "keyUp", keyCode: "ESC" });
-  assert.equal(await bestaetigung, "geschlossen", "Escape schliesst nur Anbieterfenster");
+  const zweiteSeite = seite(zweite);
+  zweiteSeite.sendInputEvent({ type: "keyDown", keyCode: "ESC" });
+  if (!zweiteSeite.isDestroyed()) zweiteSeite.sendInputEvent({ type: "keyUp", keyCode: "ESC" });
+  assert.equal(await bestaetigung, "geschlossen", "Escape entfernt nur den eingebetteten Anbieter-Overlay");
 
   bestaetigung = controller.oeffnen(provider, url, { pruefen });
-  const dritte = fenster[2];
+  const dritte = decken[2];
   await warte(() => seiteBereit(dritte));
   // Echter Nutzerklick der lokalen Fixture: Cookie und Freigabe kommen vom Server.
   await seite(dritte).executeJavaScript("document.getElementById('bestaetigen').click()", true);
@@ -153,7 +159,7 @@ app.whenReady().then(async () => {
   assert.equal(await js("window.sessionId"), "bestehende-watchparty");
 
   bestaetigung = controller.oeffnen(provider, url, { pruefen });
-  const freie = fenster[3];
+  const freie = decken[3];
   await warte(() => seiteBereit(freie));
   assert.equal(controller.offen, true, "Auch schon freie Anbieter bleiben vollstaendig sichtbar");
   // Navigation und Umbauten der fremden Webseite erreichen die feste lokale
@@ -163,18 +169,25 @@ app.whenReady().then(async () => {
   await seite(freie).executeJavaScript("document.body.innerHTML='<h1>Andere Anbieterseite</h1>';true");
   assert.equal(freie.webContents.getURL(), leistenUrl);
   assert.equal(await freie.webContents.executeJavaScript("getComputedStyle(document.getElementById('zurueckZumPlayer')).display !== 'none'"), true);
-  await freie.webContents.executeJavaScript("document.getElementById('zurueckZumPlayer').click()", true).catch(error => {
-    if (!freie.isDestroyed()) throw error;
+  const freieLeiste = freie.webContents;
+  await freieLeiste.executeJavaScript("document.getElementById('zurueckZumPlayer').click()", true).catch(error => {
+    if (!freieLeiste.isDestroyed()) throw error;
   });
   assert.equal(await bestaetigung, "geschlossen", "Zurueck zum Player funktioniert nach fremder Seitennavigation");
   assert.equal(player.webContents.getURL(), playerUrl); assert.equal(geladen, 0);
   assert.equal(await js("video.currentTime"), 12.5); assert.equal(await js("window.sessionId"), "bestehende-watchparty");
   const abbruch = new AbortController();
   bestaetigung = controller.oeffnen(provider, url, { signal: abbruch.signal, pruefen });
-  await warte(() => seiteBereit(fenster[4]));
+  await warte(() => seiteBereit(decken[4]));
   abbruch.abort(); assert.equal(await bestaetigung, "geschlossen");
   assert.equal(controller.offen, false);
-  console.log("OK Echter Electron: vollstaendige native Anbieteransicht ueber bestehendem Player, gleiche Sitzung, Serverbeleg, X/Esc/Abort, beforeunload, Security, unveraenderte URL/Position/Watchparty");
+  assert.equal(parent.isDestroyed(), false, "Rueckkehr/ESC/Abort erhalten das Hauptfenster");
+  bestaetigung = controller.oeffnen(provider, url, { pruefen });
+  await warte(() => seiteBereit(decken[5]));
+  parent.close();
+  assert.equal(await bestaetigung, "geschlossen", "Hauptfenster schliesst den Overlay samt Quellenbeobachter");
+  assert.equal(controller.offen, false);
+  console.log("OK Echter Electron: eingebettete Anbieteransicht im bestehenden Playerfenster, gleiche Sitzung, Serverbeleg, Rueckkehr/Esc/Abort, beforeunload, Security, unveraenderte URL/Position/Watchparty");
 }).then(() => ende(0), error => ende(1, error));
 function ende(code, error) {
   if (error) console.error(error);

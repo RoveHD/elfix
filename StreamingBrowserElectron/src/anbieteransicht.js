@@ -2,81 +2,105 @@
 
 // Eine echte, isolierte Browserseite. Sie besitzt weder den Player noch dessen
 // Navigation; nur die Cookie-Sitzung wird mit der Anbieter-Werkbank geteilt.
-function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScript, maskeScript, persistieren, verbinden = () => {} }) {
+function erstellen({ WebContentsView, eltern, sitzung, grenzen, zustandScript, maskeScript, persistieren, verbinden = () => {} }) {
   let offen = null;
   const istHttp = url => /^https?:$/.test((() => { try { return new URL(url).protocol; } catch { return ""; } })());
   function oeffnen(provider, url, { signal, pruefen, erlaubt = istHttp, quelleVorbereiten, quelleUebernehmen } = {}) {
     if (signal?.aborted) return Promise.resolve("geschlossen");
-    if (offen && !offen.fenster.isDestroyed()) {
+    if (offen) {
       if (offen.providerId === provider.id && offen.url === url) {
-        offen.fenster.show();
-        offen.fenster.focus();
+        offen.anordnen();
+        offen.fokussieren();
         return offen.fertig;
       }
       offen.schliessen();
     }
     const parent = eltern();
     if (!parent || parent.isDestroyed() || !sitzung() || !istHttp(url)) return Promise.resolve("fehlgeschlagen");
-    let fenster;
-    const [breite, hoehe] = parent.getContentSize();
-    try {
-      fenster = new BrowserWindow({ parent, modal: true, show: false,
-        backgroundColor: "#0b111a",
-        width: Math.max(640, breite), height: Math.max(480, hoehe), useContentSize: true,
-        title: `${provider.name || "Anbieter"} · Cloudflare bestätigen`, autoHideMenuBar: true,
-        webPreferences: { sandbox: true, contextIsolation: true,
-          nodeIntegration: false, webviewTag: false, webSecurity: true, backgroundThrottling: false }
-      });
-    } catch { return Promise.resolve("fehlgeschlagen"); }
-    // Lokale Fensteroberflaeche und fremde Anbieter-DOMs teilen weder einen
-    // Renderer noch einen Preload. Die Rueckkehrleiste ueberlebt Navigationen.
+    // Beide Renderer liegen im bestehenden Hauptfenster. Die lokale, von
+    // Anfang an deckende Flaeche trennt Rueckkehr/Laden vom fremden Dokument.
+    const decke = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true,
+      nodeIntegration: false, webviewTag: false, webSecurity: true, backgroundThrottling: false } });
+    decke.setBackgroundColor("#0b111a");
+    const lokal = decke.webContents;
+    const vorherFokus = parent.contentView.children.find(v => v.webContents?.isFocused())?.webContents;
     const view = new WebContentsView({ webPreferences: { session: sitzung(),
       sandbox: true, contextIsolation: true, nodeIntegration: false,
       webviewTag: false, webSecurity: true, backgroundThrottling: false } });
     const inhalt = view.webContents;
-    if (!maskeScript) fenster.contentView.addChildView(view);
+    view.setBackgroundColor("#0b111a");
+    const [ersteBreite, ersteHoehe] = parent.getContentSize();
+    view.setBounds({ x: 0, y: 52, width: ersteBreite, height: Math.max(1, ersteHoehe - 52) });
+    parent.contentView.addChildView(view);
+    parent.contentView.addChildView(decke);
     let ausschnitt = null;
-    let dialogAngehaengt = !maskeScript;
-    let phase = maskeScript ? "warten" : "dialog";
+    let dialogAngehaengt = false;
+    let phase = "warten";
     let lokaleSeiteBereit = false;
     let letzterLokalerStand = "";
     let manuellZeigen = false;
+    let manuellSeite = false;
     let weiterStand = null;
     const lokalerStand = () => {
-      if (lokaleSeiteBereit && !fenster.isDestroyed()) {
-        const stand = phase + "|" + Boolean(ausschnitt);
+      if (lokaleSeiteBereit && !lokal.isDestroyed()) {
+        const stand = phase + "|" + Boolean(ausschnitt) + "|" + bereit;
         if (stand === letzterLokalerStand) return;
         letzterLokalerStand = stand;
-        fenster.webContents.executeJavaScript(`globalThis.anbieterStatusSetzen?.(${JSON.stringify(phase)},${Boolean(ausschnitt)})`).catch(() => {});
+        lokal.executeJavaScript(`globalThis.anbieterStatusSetzen?.(${JSON.stringify(phase)},${Boolean(ausschnitt)},${bereit})`).catch(() => {});
       }
     };
     const anzeigen = neuePhase => {
       phase = neuePhase;
-      if (maskeScript) {
-        const seiteSichtbar = phase === "dialog" || phase === "seite";
-        if (seiteSichtbar && !dialogAngehaengt) { fenster.contentView.addChildView(view); dialogAngehaengt = true; }
-        else if (!seiteSichtbar && dialogAngehaengt) { fenster.contentView.removeChildView(view); dialogAngehaengt = false; }
+      const seiteSichtbar = lokaleSeiteBereit && (phase === "dialog" || phase === "seite");
+      if (seiteSichtbar && !dialogAngehaengt) {
+        dialogAngehaengt = true;
+        anordnen();
+        view.setVisible(true);
+        inhalt.setBackgroundThrottling(false);
+        inhalt.focus();
+      }
+      else if (!seiteSichtbar && dialogAngehaengt) {
+        view.setVisible(false);
+        dialogAngehaengt = false;
+        anordnen(); lokal.focus();
       }
       lokalerStand();
     };
+    const boundsSetzen = (ansicht, ziel) => {
+      const vorher = ansicht.getBounds();
+      if (["x", "y", "width", "height"].some(key => vorher[key] !== ziel[key])) ansicht.setBounds(ziel);
+    };
     const anordnen = () => {
-      const [width, height] = fenster.getContentSize();
-      view.setBounds({ x: 0, y: 52, width, height: Math.max(1, height - 52) });
+      if (parent.isDestroyed()) return;
+      const [breite, hoehe] = parent.getContentSize();
+      const bereich = grenzen?.() || { x: 0, y: 0, width: breite, height: hoehe };
+      const x = Math.max(0, Math.min(breite - 1, Math.round(bereich.x || 0)));
+      const y = Math.max(0, Math.min(hoehe - 1, Math.round(bereich.y || 0)));
+      const width = Math.max(1, Math.min(breite - x, Math.round(bereich.width || breite)));
+      const height = Math.max(1, Math.min(hoehe - y, Math.round(bereich.height || hoehe)));
+      boundsSetzen(decke, { x, y, width, height: dialogAngehaengt ? Math.min(52, height) : height });
+      boundsSetzen(view, { x, y: y + 52, width, height: Math.max(1, height - 52) });
+      const kinder = parent.contentView.children;
+      if (kinder.at(-2) !== view || kinder.at(-1) !== decke) {
+        parent.contentView.addChildView(view);
+        parent.contentView.addChildView(decke);
+        inhalt.setBackgroundThrottling(false);
+        lokal.setBackgroundThrottling(false);
+      }
     };
     anordnen();
-    fenster.on("resize", anordnen);
+    // Owner und Viewport zuerst anlegen. Ein vor dem ersten Bounds gesetztes
+    // hidden kann einen 0px-Viewport hinterlassen, in dem kein Dialog erkannt wird.
+    view.setVisible(false);
+    parent.on("resize", anordnen);
     const lokaleDatei = require("node:path").join(__dirname, "anbieteransicht-leiste.html");
-    fenster.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-    fenster.webContents.on("will-navigate", event => event.preventDefault());
-    fenster.on("page-title-updated", event => event.preventDefault());
+    lokal.setWindowOpenHandler(() => ({ action: "deny" }));
+    lokal.on("will-navigate", event => event.preventDefault());
     verbinden(inhalt, provider);
     const quellen = quelleVorbereiten?.(view);
     inhalt.setAudioMuted(true);
     inhalt.setWindowOpenHandler(() => ({ action: "deny" }));
     inhalt.on("will-prevent-unload", event => event.preventDefault());
-    // Der Hauptprozess entscheidet weiterhin ueber Pause-bei-Fokusverlust,
-    // auch wenn der Fokus zuvor im modalen Kindfenster lag.
-    fenster.on("blur", () => { if (!parent.isDestroyed()) parent.emit("blur"); });
     let ergebnis = "geschlossen";
     let gesehen = false;
     let generation = 0;
@@ -89,12 +113,35 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
     let weiterAm = 0;
     let aufloesen;
     const fertig = new Promise(resolve => { aufloesen = resolve; });
-    const eintrag = { fenster, providerId: provider.id, url, fertig,
-      schliessen() { if (!fenster.isDestroyed()) fenster.close(); } };
+    const eintrag = { parent, lokal, inhalt, providerId: provider.id, url, fertig, anordnen,
+      fokussieren() { parent.focus(); (dialogAngehaengt ? inhalt : lokal).focus(); }, schliessen };
     offen = eintrag;
-    const schliessen = () => eintrag.schliessen();
+    let geschlossen = false;
+    function schliessen() {
+      if (geschlossen) return;
+      geschlossen = true;
+      clearInterval(beobachter);
+      abbruch.abort();
+      quellen?.schliessen();
+      signal?.removeEventListener("abort", schliessen);
+      parent.removeListener("resize", anordnen);
+      parent.removeListener("resize", neuMaskieren);
+      parent.removeListener("closed", schliessen);
+      if (offen === eintrag) offen = null;
+      if (!parent.isDestroyed()) {
+        parent.contentView.removeChildView(view);
+        parent.contentView.removeChildView(decke);
+      }
+      if (!inhalt.isDestroyed()) inhalt.close();
+      if (!lokal.isDestroyed()) lokal.close();
+      Promise.resolve().then(() => persistieren(sitzung())).catch(() => {}).then(() => aufloesen(ergebnis));
+      if (!parent.isDestroyed()) {
+        if (vorherFokus && !vorherFokus.isDestroyed()) vorherFokus.focus();
+        else parent.webContents.focus();
+      }
+    }
     signal?.addEventListener("abort", schliessen, { once: true });
-    const gueltig = () => offen === eintrag && !fenster.isDestroyed() && !abbruch.signal.aborted && !signal?.aborted;
+    const gueltig = () => offen === eintrag && !parent.isDestroyed() && !geschlossen && !abbruch.signal.aborted && !signal?.aborted;
     const maskieren = async () => {
       if (!maskeScript || !gueltig() || !bereit) return;
       const stand = generation;
@@ -110,10 +157,11 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
         anordnen();
       } else {
         ausschnitt = null;
-        anzeigen(weiterAm ? "laden" : "seite");
+        anzeigen(weiterAm ? "laden" : manuellSeite ? "seite" : "warten");
       }
     };
-    fenster.on("resize", () => { void maskieren(); });
+    const neuMaskieren = () => { void maskieren(); };
+    parent.on("resize", neuMaskieren);
     inhalt.on("console-message", (_event, ...args) => {
       const details = [_event, ...args].find(wert => typeof wert?.message === "string");
       const meldung = details?.message ?? args[1];
@@ -127,9 +175,16 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
         }
       }
     });
-    fenster.webContents.on("console-message", (_event, ...args) => {
+    lokal.on("console-message", (_event, ...args) => {
       const details = [_event, ...args].find(wert => typeof wert?.message === "string");
-      if ((details?.message ?? args[1]) === "__elfix:anbieter:dialog-zeigen" && ausschnitt && gueltig()) {
+      const meldung = details?.message ?? args[1];
+      if (meldung === "__elfix:anbieter:schliessen") { schliessen(); return; }
+      if (meldung === "__elfix:anbieter:seite-zeigen" && bereit && gueltig()) {
+        manuellSeite = true;
+        inhalt.executeJavaScriptInIsolatedWorld(987, [{ code: "globalThis.__elfixAnbieterSeiteZeigen=true;globalThis.__elfixAnbieterMaskierung?.();" }])
+          .then(() => { if (gueltig()) anzeigen("seite"); }).catch(() => {});
+      }
+      if (meldung === "__elfix:anbieter:dialog-zeigen" && ausschnitt && gueltig()) {
         manuellZeigen = true;
         anzeigen("dialog");
         anordnen();
@@ -142,6 +197,7 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
       try {
         await maskieren();
         if (!gueltig() || stand !== generation || !bereit) return;
+        if (!maskeScript) anzeigen("seite");
         const lage = await inhalt.executeJavaScript(zustandScript());
         if (!gueltig() || stand !== generation || !bereit) return;
         if (quellen) {
@@ -192,11 +248,11 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
       if (input.type === "keyDown" && input.key === "Escape") { event.preventDefault(); schliessen(); }
     };
     inhalt.on("before-input-event", taste);
-    fenster.webContents.on("before-input-event", taste);
+    lokal.on("before-input-event", taste);
     inhalt.on("did-start-navigation", (_event, _url, inPlace, hauptrahmen) => {
       if (hauptrahmen && !inPlace) {
-        generation++; bereit = false;
-        if (maskeScript) { ausschnitt = null; anzeigen(weiterAm ? "laden" : "warten"); }
+        generation++; bereit = false; manuellSeite = false;
+        ausschnitt = null; anzeigen(weiterAm ? "laden" : "warten");
       }
     });
     inhalt.on("dom-ready", () => { bereit = true; void pruefe(); });
@@ -204,25 +260,19 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
       if (hauptrahmen && code !== -3 && gueltig()) { ergebnis = "fehlgeschlagen"; schliessen(); }
     });
     inhalt.on("render-process-gone", () => { ergebnis = "fehlgeschlagen"; schliessen(); });
+    lokal.on("render-process-gone", () => { ergebnis = "fehlgeschlagen"; schliessen(); });
     const beobachter = setInterval(pruefe, 400);
     beobachter.unref?.();
-    fenster.on("closed", () => {
-      clearInterval(beobachter);
-      abbruch.abort();
-      quellen?.schliessen();
-      signal?.removeEventListener("abort", schliessen);
-      if (offen === eintrag) offen = null;
-      // flushStore sichert auch Cookies einer noch nicht abgeschlossenen
-      // Abfrage. Das Schliessen selbst bleibt ausdruecklich kein Erfolgsbeleg.
-      Promise.resolve().then(() => persistieren(sitzung())).catch(() => {}).then(() => aufloesen(ergebnis));
-      if (!inhalt.isDestroyed()) inhalt.close();
-      if (parent && !parent.isDestroyed()) parent.focus();
-    });
+    parent.on("closed", schliessen);
     if (parent.isMinimized()) parent.restore();
     if (!parent.isVisible()) parent.show();
-    fenster.show();
-    fenster.focus();
-    fenster.webContents.loadFile(lokaleDatei).then(() => { lokaleSeiteBereit = true; lokalerStand(); }).catch(() => {
+    parent.focus();
+    lokal.loadFile(lokaleDatei).then(() => {
+      if (!gueltig()) return;
+      lokaleSeiteBereit = true;
+      lokal.setBackgroundThrottling(false);
+      anzeigen(phase); if (!dialogAngehaengt) lokal.focus();
+    }).catch(() => {
       if (gueltig()) { ergebnis = "fehlgeschlagen"; schliessen(); }
     });
     inhalt.loadURL(url).catch(error => {
@@ -230,8 +280,9 @@ function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScr
     });
     return fertig;
   }
-  return { oeffnen, get offen() { return Boolean(offen && !offen.fenster.isDestroyed()); },
-    get fokussiert() { return Boolean(offen && !offen.fenster.isDestroyed() && offen.fenster.isFocused()); },
+  return { oeffnen, get offen() { return Boolean(offen); },
+    get fokussiert() { return Boolean(offen && offen.parent.isFocused() && (offen.lokal.isFocused() || offen.inhalt.isFocused())); },
+    anordnen() { offen?.anordnen(); },
     schliessen() { offen?.schliessen(); } };
 }
 

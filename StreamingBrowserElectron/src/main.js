@@ -340,8 +340,9 @@ const ADGUARD_FILTER_LISTS = [
 
 let mainWindow;
 let browserSession;
-const anbieterSeitenAnsicht = anbieteransicht.erstellen({ BrowserWindow, WebContentsView,
+const anbieterSeitenAnsicht = anbieteransicht.erstellen({ WebContentsView,
   eltern: () => mainWindow, sitzung: () => browserSession,
+  grenzen: () => spielerView?.getBounds() || browserBounds,
   zustandScript: () => verifizierungstor.zustandScript(), persistieren: cfSitzungPersistieren,
   maskeScript: kennung => verifizierungstor.dialogMaskeScript(kennung),
   verbinden: (inhalt, provider) => {
@@ -11181,6 +11182,7 @@ function spielerLageSetzen() {
   const size = mainWindow.getContentSize();
   if (isContentFullscreen) {
     spielerView.setBounds({ x: 0, y: 0, width: size[0], height: size[1] });
+    anbieterSeitenAnsicht.anordnen();
     return;
   }
   spielerView.setBounds({
@@ -11189,6 +11191,7 @@ function spielerLageSetzen() {
     width: clamp(browserBounds.width, 1, size[0]),
     height: clamp(browserBounds.height, 1, size[1])
   });
+  anbieterSeitenAnsicht.anordnen();
 }
 
 /** Den Vollbildwunsch erst einloesen, wenn der eigene Player wirklich spielt. */
@@ -11420,6 +11423,7 @@ function spielerAuftrag() {
   const runde = spielerRunde();
   return {
     id: spielerLauf.id,
+    url: spielerLauf.url,
     adresse: spielerLauf.quelle.adresse,
     typ: spielerLauf.quelle.typ,
     titel: spielerLauf.titel,
@@ -11926,6 +11930,17 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
   const signal = optionen.signal || direktAuftragBeginnen();
   const abgebrochen = () => signal.aborted || (optionen.istAktuell && !optionen.istAktuell());
   if (abgebrochen()) return { ok: false, abgebrochen: true };
+  // Die Wahl gilt sofort, auch wenn der neue Hoster erst eine Bestaetigung
+  // braucht. Sonst spielt die alte Folge weiter und ihr Auftrag verhindert
+  // danach die Uebernahme der freigegebenen Quelle der neuen Folge.
+  if (spielerLauf && !optionen.vorladen && (spielerLauf.providerId !== provider.id || !seiteGleich(spielerLauf.url, url))) {
+    const offen = await direktSpielerOeffnen(provider, url, {
+      ok: true, quelle: { adresse: "", typ: "", hoehe: 0 }, kopfzeilen: null,
+      hoster: "", link: "", hosterliste: []
+    }, { ...optionen, signal, laden: true, auswahl: false });
+    if (abgebrochen()) return { ok: false, abgebrochen: true };
+    if (!offen) return { ok: false, grund: "Player ließ sich nicht öffnen" };
+  }
   const anbieterVersuch = direktFallbackStarten(provider, url, signal, optionen);
   const gelesen = optionen.links?.length
     ? { view: getProviderView(provider), links: optionen.links }
@@ -11935,6 +11950,12 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
   if (abgebrochen()) return { ok: false, abgebrochen: true };
   const view = gelesen?.view;
   if (!view) return { ok: false, grund: "Die Folgenseite lädt nicht" };
+  if (spielerLauf?.laden && !spielerLauf.quelle?.adresse
+    && spielerLauf.providerId === provider.id && seiteGleich(spielerLauf.url, url)) {
+    // Derselbe Ladeauftrag bleibt fuer einen schon offenen Bestaetigungs-
+    // handschlag gueltig; nur die Kacheln dieser neuen Folge kommen hinzu.
+    spielerLauf.hosterliste = gelesen.links || [];
+  }
 
   // In einer Runde gilt die Fassung der Runde - und zwar von der ersten
   // Sekunde an, nicht erst nach einem Wechsel.
@@ -12211,6 +12232,13 @@ async function direktUebernehmen(provider, url, signal = direktAuftragBeginnen()
     // Keine Quelle: dann wenigstens die Auswahl, dort steht auch die
     // Hosterwahl. Und wenn selbst die nicht zu lesen ist, die Oberflaeche.
     console.log(`[ELFIX DIREKT] keine Quelle (${ergebnis.grund}) - es bleibt bei der Auswahl`);
+    if (anbieterVersuch && spielerLauf?.laden && spielerLauf.providerId === provider.id && seiteGleich(spielerLauf.url, url)) {
+      // Der aktuelle S.to-Auftrag kann schon auf die manuelle Freigabe
+      // warten. Ein Ersatzauftrag derselben Folge wuerde deren Callback
+      // veralten lassen, bevor der Nutzer auf Weiter druecken kann.
+      sendToast(`Keine direkte Quelle: ${ergebnis.grund}`);
+      return;
+    }
     const auswahl = await direktAuswahlOeffnen(provider, url, { hosterliste: ergebnis.hosterliste || links, signal });
     if (signal.aborted) return;
     sendToast(`Keine direkte Quelle: ${ergebnis.grund}`);
