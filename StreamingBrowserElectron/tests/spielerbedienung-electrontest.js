@@ -196,7 +196,7 @@ app.whenReady().then(async () => {
     window.__staleSpiele = 0;
     stelleSetzen = () => new Promise((fertig) => { fortsetzen = fertig; });
     bild.play = () => { window.__staleSpiele += 1; return Promise.resolve(); };
-    auftrag = { startzeit: 10 };
+    auftrag = { ...auftrag, startzeit: 10 };
     startGesetzt = false;
     bild.dispatchEvent(new Event("loadedmetadata"));
     starten({ laden: true });
