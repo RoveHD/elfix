@@ -3,6 +3,16 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.75 — 21. Oktober 2026
+
+- Windows: ELFIX meldet tatsaechlich beobachtete Medienverbindungen automatisch
+  an DYNEX. Verschluesselte Hoster koennen dadurch unterhalb von Spielen und
+  Sprache priorisiert werden, ohne manuelle Kopplung oder Proxy-Einrichtung.
+- Die lokale Benutzermeldung enthaelt nur Server-IP, Port und eigene Prozess-IDs.
+  Webseiten, Updates und Dateianhaenge erhalten keinen Mediennachweis; URLs,
+  Cookies, Titel und Inhalte werden nicht uebertragen. Ohne DYNEX bleibt die
+  Wiedergabe unveraendert.
+
 ## 2.0.66 — 12. Oktober 2026
 
 - Suche auf Handy und Fernseher hat jetzt dieselben Regeln wie am Rechner:

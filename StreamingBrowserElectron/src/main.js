@@ -4,6 +4,10 @@ const fs = require("fs");
 const path = require("path");
 const ipcSchutz = require("./ipc-schutz");
 const spielerNetz = require("./spieler-netz");
+const dynexVideo = require("./dynex-video").erstellen({
+  prozesse: () => [process.pid, ...app.getAppMetrics().filter(p => p.type === "Utility").map(p => p.pid)]
+});
+app.once("will-quit", () => dynexVideo.schliessen());
 const videoUpscalingStatus = require("./video-upscaling-status");
 const cfSession = require("./cf-session");
 let sprachchatFenster = null;
@@ -1030,7 +1034,9 @@ function publicUpdateState() {
 }
 
 function configureBrowserSession() {
+  dynexVideo.beobachten(browserSession, { antwortSchonBelegt: true });
   browserSession.webRequest.onResponseStarted((details) => {
+    dynexVideo.antwort(browserSession, details);
     if (details.statusCode < 200 || details.statusCode >= 400) return;
     direktBeobachter.get(details.webContentsId)?.({
       adresse: details.url, rahmen: frameQuelle(details), anfrageId: details.id,
@@ -11249,6 +11255,7 @@ function spielerSessionHolen() {
     onResponse: spielerStreamAntwort,
     requestHeaders: () => spielerKopfzeilen || {}
   });
+  dynexVideo.beobachten(spielerSession);
   spielerSession.webRequest.onBeforeSendHeaders((details, callback) => {
     // Die eigene Seite kommt von der Platte und braucht nichts davon.
     if (!spielerKopfzeilen || !/^https?:/i.test(details.url || "")) {
