@@ -12,6 +12,7 @@ const assert = require("assert/strict");
 const { pathToFileURL } = require("url");
 const direktbeobachtung = require("../src/direktbeobachtung");
 const ablage = fs.mkdtempSync(path.join(os.tmpdir(), "elfix-direkt-test-"));
+const dynexVideo = require("../src/dynex-video").erstellen({ localAppData: ablage });
 app.setPath("userData", ablage);
 app.disableHardwareAcceleration();
 let fenster;
@@ -87,7 +88,7 @@ app.whenReady().then(async () => {
     return main.slice(start, main.indexOf("\n}", start) + 2);
   };
   const beobachter = new Map();
-  const c = vm.createContext({ console, app, WebContentsView, direktbeobachtung,
+  const c = vm.createContext({ console, app, WebContentsView, direktbeobachtung, dynexVideo,
     browserSession: session.fromPartition("elfix-direkt-test"), direktBeobachter: beobachter,
     webContentsProvider: new Map(), providerModel: { isHttpUrl: (wert) => /^https?:/.test(wert) },
     frameQuelle: (details) => details.referrer || "", setTimeout, FRAME_SCRIPT_TIMEOUT_MS: 1000 });
@@ -104,6 +105,7 @@ app.whenReady().then(async () => {
 
 function beenden(code) {
   clearTimeout(frist);
+  dynexVideo.schliessen();
   fenster?.destroy();
   server?.close();
   app.exit(code);
