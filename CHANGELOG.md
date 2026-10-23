@@ -16,6 +16,8 @@ Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
   für AniSkip nötigen MAL-ID. Alte leere Segment-Caches werden neu geprüft.
 - Die zusätzliche Staffelzuordnung läuft im Hintergrund, ohne den Stream zu
   wechseln oder eine weitere Cloudflare-Bestätigung zu öffnen.
+- Electron 44.5.0 behebt die gemeldete fehlerhafte Zuordnung von Pointer-Lock-
+  Berechtigungsanfragen aus eingebetteten Seiten (GHSA-x562-297c-g43g).
 
 ## 2.0.75 — 21. Oktober 2026
 
