@@ -10827,12 +10827,23 @@ public class MainActivity extends Activity {
                     else marken.nativeMarke(provider, url, bestand.roh(), fertig);
                 }
                 public void skipKontext(java.util.function.Consumer<JSONObject> fertig) {
+                    skipKontext(null, fertig);
+                }
+                public void skipKontext(JSONArray staffelListen,
+                                        java.util.function.Consumer<JSONObject> fertig) {
                     if (kern == null || !kern.istBereit()) { fertig.accept(null); return; }
                     // Der Lauf nimmt vorhandene Metadaten zuerst und loest nur
                     // fehlende Kennungen ueber seinen eigenen Resolver. Der
                     // Player reicht spaeter nur die echte Media3-Laufzeit
                     // nach, damit keine Abfrage im Sekundentakt entsteht.
-                    kern.rufe("empfehlung-bruecke.skipKontext", Kern.args(name, url), (wert, fehler) -> {
+                    JSONArray argumente = Kern.args(name, url);
+                    if (staffelListen != null) {
+                        try {
+                            argumente = Kern.args(name, url,
+                                new JSONObject().put("staffelListen", staffelListen));
+                        } catch (org.json.JSONException ignoriert) { }
+                    }
+                    kern.rufe("empfehlung-bruecke.skipKontext", argumente, (wert, fehler) -> {
                         if (fehler != null || wert == null || "null".equals(wert)) {
                             fertig.accept(null);
                             return;

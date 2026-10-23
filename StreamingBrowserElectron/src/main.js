@@ -10486,7 +10486,7 @@ const werkbankAuftraege = new Map();
 
 // Navigation und DOM-Lesen gehoeren zusammen. Die Folgenliste darf die Seite
 // nicht unter einem gleichzeitig laufenden Hoster-Lesevorgang austauschen.
-async function werkbankLesen(provider, adresse, lesen, gueltig = () => true, eigeneView = null) {
+async function werkbankLesen(provider, adresse, lesen, gueltig = () => true, eigeneView = null, optionen = {}) {
   const vorher = werkbankAuftraege.get(provider.id) || Promise.resolve();
   const auftrag = vorher.catch(() => {}).then(async () => {
     try {
@@ -10495,7 +10495,7 @@ async function werkbankLesen(provider, adresse, lesen, gueltig = () => true, eig
       // Anbieter geleert wird. Nach dem Start ist das ein erfuellter Ausdruck.
       await browserdatenFrei;
       if (!gueltig()) return null;
-      const view = await werkbankAn(provider, adresse, gueltig, eigeneView);
+      const view = await werkbankAn(provider, adresse, gueltig, eigeneView, optionen);
       if (!view || !gueltig()) return null;
       return await lesen(view);
     } finally {
@@ -10926,7 +10926,7 @@ async function cfAdresseVerifizieren(provider, details = {}, signal = null) {
 }
 
 /** Die Werkbank auf eine Seite stellen - und sie dort auch wirklich vorfinden. */
-async function werkbankAn(provider, adresse, gueltig = () => true, eigeneView = null) {
+async function werkbankAn(provider, adresse, gueltig = () => true, eigeneView = null, optionen = {}) {
   if (!gueltig() || !providerModel.isHttpUrl(adresse)) return null;
   const view = eigeneView || getProviderView(provider);
   if (!isLiveView(view)) return null;
@@ -10943,6 +10943,7 @@ async function werkbankAn(provider, adresse, gueltig = () => true, eigeneView = 
   // und dafuer muss man sie sehen.
   if (!gueltig()) return null;
   if (direktModus(adresse) && await menschentorErkennen(view)) {
+    if (optionen.still) return null;
     const geloest = await menschentorLoesenLassen(provider, view, { gueltig });
     if (!geloest) return null;
   }
@@ -10981,7 +10982,7 @@ async function folgenlisteLesen(provider, adresse, optionen = {}) {
       : null;
     stand = await werkbankLesen(provider, staffelUrl,
       (view) => view.webContents.executeJavaScript(seitendaten.uebersichtSkript(), true),
-      optionen.gueltig, eigeneView);
+      optionen.gueltig, eigeneView, optionen);
   } catch {
     return gemerkt?.stand || null;
   }
@@ -11879,6 +11880,37 @@ function spielerFolgenSicht(stand, provider, url) {
   } : null;
 }
 
+// Ein MAL-Eintrag kann beim Anbieter in mehrere Staffeln geteilt sein. Nur
+// vollstaendige Listen bis zu seiner belegten Gesamtzahl erlauben den Offset.
+// Das laeuft nach dem Videostart auf der vorhandenen separaten Folgen-Werkbank.
+async function spielerSkipStaffeln(aktuell, kontext, gueltig) {
+  const gesamt = kontext.malFolgenGesamt;
+  if (kontext.art !== "anime" || !kontext.ids?.mal || kontext.malEpisode
+    || kontext.season <= 1 || !Number.isSafeInteger(gesamt) || gesamt <= 0 || gesamt > 10000
+    || !gueltig()) return [];
+  const provider = spielerAnbieter();
+  const serie = serienKennungAusUrl(aktuell.url);
+  if (!provider || !serie) return [];
+  const stand = await folgenlisteLesen(provider, aktuell.url, { gueltig, still: true }).catch(() => null);
+  if (!gueltig() || !Array.isArray(stand?.staffeln)) return [];
+  const staffeln = stand.staffeln.filter(s => Number.isSafeInteger(s?.staffel) && s.staffel > 0)
+    .sort((a, b) => a.staffel - b.staffel);
+  const listen = [];
+  let anzahl = 0;
+  for (const staffel of staffeln) {
+    if (!gueltig() || listen.length >= 60 || staffel.staffel !== listen.length + 1
+      || !providerModel.isHttpUrl(staffel.url) || serienKennungAusUrl(staffel.url) !== serie) return [];
+    const gelesen = stand.offeneStaffel === staffel.staffel ? stand
+      : await folgenlisteLesen(provider, staffel.url, { gueltig, still: true }).catch(() => null);
+    if (!gueltig() || gelesen?.offeneStaffel !== staffel.staffel
+      || !Array.isArray(gelesen.folgen) || !gelesen.folgen.length) return [];
+    listen.push(gelesen);
+    anzahl += gelesen.folgen.length;
+    if (anzahl >= gesamt) return anzahl === gesamt ? listen : [];
+  }
+  return [];
+}
+
 async function spielerSkipLesen(ereignis, id, dauer) {
   if (!vomSpieler(ereignis) || id !== spielerLauf.id || settings.playback?.skipSegments === false
     || typeof dauer !== "number" || !Number.isFinite(dauer) || dauer <= 0 || dauer > 86400) return [];
@@ -11886,8 +11918,15 @@ async function spielerSkipLesen(ereignis, id, dauer) {
   const gueltig = () => spielerLauf === aktuell && vomSpieler(ereignis)
     && settings.playback?.skipSegments !== false;
   try {
-    const kontext = await lauf.skipKontext(cleanBaseMediaTitle(aktuell.titel, aktuell.url), aktuell.url);
+    const name = cleanBaseMediaTitle(aktuell.titel, aktuell.url);
+    let kontext = await lauf.skipKontext(name, aktuell.url);
     if (!gueltig() || !kontext) return [];
+    if (kontext.art === "anime" && !kontext.malEpisode && kontext.season > 1) {
+      const staffelListen = await spielerSkipStaffeln(aktuell, kontext, gueltig);
+      if (!gueltig()) return [];
+      if (staffelListen.length) kontext = await lauf.skipKontext(name, aktuell.url, { staffelListen });
+      if (!gueltig() || !kontext) return [];
+    }
     const segmente = await skipClient().lesen({ ...kontext, duration: dauer });
     return gueltig() ? segmente : [];
   } catch { return []; }

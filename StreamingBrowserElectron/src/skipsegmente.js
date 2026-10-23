@@ -7,7 +7,7 @@
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof window !== "undefined") window.ElfixSkipsegmente = api;
 })(function bauen() {
-  const CACHE_VERSION = 1;
+  const CACHE_VERSION = 2;
   const CACHE_MAX = 512;
   const GUT_MS = 7 * 24 * 60 * 60 * 1000;
   const LEER_MS = 6 * 60 * 60 * 1000;
@@ -15,6 +15,10 @@
   const STANDARD_TIMEOUT_MS = 3000;
   const MAX_GLEICHZEITIG = 3;
   const MAX_ANTWORT_BYTES = 512 * 1024;
+  // AniSkip selbst sucht bei bekannter Laufzeit innerhalb von +/-20 Sekunden.
+  // Engere 2 Sekunden verwarfen u.a. vorhandene Black-Clover-Intros wegen
+  // kleiner Laengenunterschiede der Dateien. Grenzen bleiben unveraendert.
+  const ANISKIP_LAUFZEIT_TOLERANZ = 20;
   const TYPEN = ["intro", "recap", "outro", "preview"];
   const PRIORITAET = {
     anime: ["aniskip", "skipdb", "introdb", "theintrodb"],
@@ -381,7 +385,8 @@
       for (const roh of daten.results) {
         const type = mapping[roh?.skipType];
         if (!type || roh?.skipType === "mixed-op" || roh?.skipType === "mixed-ed") continue;
-        if (!echteZahl(roh.episodeLength) || Math.abs(roh.episodeLength - dauer) > 2) continue;
+        if (!echteZahl(roh.episodeLength) || roh.episodeLength <= 0
+          || Math.abs(roh.episodeLength - dauer) > ANISKIP_LAUFZEIT_TOLERANZ) continue;
         const segment = basisSegment(type, roh?.interval?.startTime, roh?.interval?.endTime,
           "AniSkip", null, dauer);
         if (segment) segmente.push(segment);

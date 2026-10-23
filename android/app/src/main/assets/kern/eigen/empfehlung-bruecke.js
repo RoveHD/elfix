@@ -237,10 +237,10 @@
    * zusammensuchen. Der Aufrufer reicht die Laufzeit erst beim Abfragen der
    * Segmente nach, weil sie nur der native Player verlaesslich kennt.
    */
-  async function skipKontext(name, url) {
+  async function skipKontext(name, url, optionen) {
     if (!lauf || typeof lauf.skipKontext !== "function") return null;
     try {
-      return await lauf.skipKontext(String(name || ""), String(url || ""));
+      return await lauf.skipKontext(String(name || ""), String(url || ""), optionen || {});
     } catch (fehler) {
       return null;
     }

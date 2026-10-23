@@ -174,6 +174,52 @@ const serie = {
     assert.strictEqual(segmente[0].start, 1320);
   });
 
+  await pruefe("Black-Clover-Intros bleiben bei kleinen Dateilaengenunterschieden erhalten", async () => {
+    // Oeffentliche AniSkip-Antworten fuer MAL34572/71 und /79 vom 23.10.2026.
+    // Die lokale deutsche Datei dauert 1430.1s; die fruehere 2s-Grenze verwarf beide.
+    for (const [episode, start, end, laenge] of [[71, 0, 157, 1432.125], [79, 80, 170, 1436.977]]) {
+      const client = skipsegmente.erstellen({ holen: async url => {
+        assert(url.includes(`/34572/${episode}?`));
+        assert(url.includes("episodeLength=1430.1"));
+        return antwort({ found: true, results: [
+          { interval: { startTime: start, endTime: end }, skipType: "op", episodeLength: laenge },
+          { interval: { startTime: 1273, endTime: 1433 }, skipType: "ed", episodeLength: 1433.807 }
+        ] });
+      } });
+      const segmente = await client.lesen({ art: "anime", ids: { mal: 34572 }, malEpisode: episode, duration: 1430.1 });
+      assert.deepStrictEqual(segmente.map(s => [s.type, s.start, s.end]), [["intro", start, end]],
+        "Originalgrenzen bleiben gleich; Abspann ausserhalb des Videos bleibt verworfen");
+    }
+  });
+
+  await pruefe("AniSkip haelt die 20s-Laufzeitgrenze seines API-Vertrags ein", async () => {
+    for (const [laenge, erlaubt] of [[1420, true], [1380, true], [1420.001, false], [1379.999, false], [0, false]]) {
+      const client = skipsegmente.erstellen({ holen: async () => antwort({ found: true, results: [
+        { interval: { startTime: 10, endTime: 100 }, skipType: "op", episodeLength: laenge }
+      ] }) });
+      assert.equal((await client.lesen({ art: "anime", ids: { mal: 34572 }, malEpisode: 71, duration: 1400 })).length,
+        erlaubt ? 1 : 0);
+    }
+  });
+
+  await pruefe("Alte leere Skip-Caches verdecken die korrigierte Laufzeitpruefung nicht", async () => {
+    let abrufe = 0;
+    const client = skipsegmente.erstellen({ laden: () => ({ version: 1, eintraege: {
+      "v1|anime|34572|||||2|20|71|1430.1": { at: Date.now(), status: "leer", segmente: [] }
+    } }), holen: async () => {
+      abrufe++;
+      return antwort({ found: true, results: [
+        { interval: { startTime: 0, endTime: 157 }, skipType: "op", episodeLength: 1432.125 }
+      ] });
+    } });
+    const kontext = { art: "anime", ids: { mal: 34572 }, season: 2, episode: 20, malEpisode: 71, duration: 1430.1 };
+    assert.equal((await client.lesen(kontext))[0]?.end, 157);
+    assert.equal(abrufe, 1);
+    assert.equal(client.cache().version, 2);
+    await client.lesen(kontext);
+    assert.equal(abrufe, 1, "Die neue Fassung verwendet weiterhin den Cache");
+  });
+
   await pruefe("TheIntroDB behandelt dokumentierte Nullgrenzen und mehrere Abschnitte", async () => {
     const client = skipsegmente.erstellen({ holen: async (url) => {
       if (url.includes("skipdb")) return antwort({ segments: { intro: null, recap: null, outro: null, preview: null } });

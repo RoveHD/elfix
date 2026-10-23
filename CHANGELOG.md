@@ -3,6 +3,20 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.76 — 23. Oktober 2026
+
+- Intro-Daten bei aufgeteilten Anime-Staffeln: Black Clover wird anhand der
+  vollständigen Anbieter-Folgenlisten durchgehend zugeordnet. Staffel 2,
+  Folge 20 fragt damit MAL-Folge 71 ab. Spätere eigenständige Staffeln werden
+  nicht mit der alten Anime-ID verwechselt. Gilt für PC, Handy und Android TV.
+- Vorhandene AniSkip-Zeiten werden bei kleinen Unterschieden der Videolänge
+  nicht mehr vorschnell verworfen. Die Laufzeitprüfung folgt der 20-Sekunden-Grenze
+  der API; Zeiten außerhalb des Videos bleiben ausgeschlossen.
+- Eine bereits bekannte IMDb-ID verhindert bei Anime nicht mehr den Abruf der
+  für AniSkip nötigen MAL-ID. Alte leere Segment-Caches werden neu geprüft.
+- Die zusätzliche Staffelzuordnung läuft im Hintergrund, ohne den Stream zu
+  wechseln oder eine weitere Cloudflare-Bestätigung zu öffnen.
+
 ## 2.0.75 — 21. Oktober 2026
 
 - Windows: ELFIX meldet tatsaechlich beobachtete Medienverbindungen automatisch

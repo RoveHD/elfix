@@ -30,6 +30,7 @@ import org.json.JSONTokener;
 
 /** Reads provider pages as data and gives resolved media to the native player. */
 final class DirektWiedergabe {
+    private static final long INTRO_STAFFEL_FRIST_MS = 25000L;
     interface Umgebung {
         void geschlossen();
         void browser(Provider anbieter, String adresse);
@@ -42,6 +43,10 @@ final class DirektWiedergabe {
         void marke(Consumer<JSONObject> fertig);
         /** Cache-first Kennung fuer externe Vorspann- und Abspannsegmente. */
         default void skipKontext(Consumer<JSONObject> fertig) { fertig.accept(null); }
+        /** Wiederholte Kernabfrage mit den vollstaendig gelesenen Anbieter-Staffeln. */
+        default void skipKontext(JSONArray staffelListen, Consumer<JSONObject> fertig) {
+            skipKontext(fertig);
+        }
         void sprung(double von, double nach);
         /** Die Bedienung des Players ist gekommen oder gegangen. */
         default void bedienung(boolean sichtbar) { }
@@ -91,7 +96,14 @@ final class DirektWiedergabe {
     private final FrameLayout wurzel;
     private final String kennung;
     private final Map<String, Integer> challengeVersuche = new HashMap<>();
+    private final Map<Integer, JSONObject> introStaffelCache = new HashMap<>();
     private WebView seite;
+    /** Separater, unsichtbarer Leser fuer Intro-Zuordnung; fasst den Player-Resolver nicht an. */
+    private WebView introStaffelWebView;
+    private String introStaffelSkript;
+    private int introStaffelLauf;
+    private int introKontextLauf;
+    private Runnable introStaffelFrist;
     /** Welche Zeile der Quellenliste gerade spielt - die Blende hebt sie hervor. */
     private int laufenderHoster = -1;
     private boolean geschlossen;
@@ -248,7 +260,7 @@ final class DirektWiedergabe {
             public boolean darfAutoplay() { return umgebung.darfAutoplay(); }
             public boolean queueWeiter() { return umgebung.queueWeiter(); }
             public void marke(Consumer<JSONObject> fertig) { umgebung.marke(fertig); }
-            public void skipKontext(Consumer<JSONObject> fertig) { umgebung.skipKontext(fertig); }
+            public void skipKontext(Consumer<JSONObject> fertig) { DirektWiedergabe.this.skipKontext(fertig); }
             public void sprung(double von, double nach) { umgebung.sprung(von, nach); }
             public void bedienung(boolean sichtbar) { umgebung.bedienung(sichtbar); }
             public void fassungWaehlen(String fassung, String hoster) { fassungAusRunde(fassung, hoster); }
@@ -1194,9 +1206,379 @@ final class DirektWiedergabe {
             WebView view = seite;
             view.evaluateJavascript(script, wert -> {
                 if (!aktuell(id) || view != seite) return;
-                try { fertig.accept(new JSONObject(wert)); } catch (Exception ignoriert) { }
+                try {
+                    JSONObject gelesen = new JSONObject(wert);
+                    introStaffelMerken(gelesen, 0);
+                    fertig.accept(gelesen);
+                } catch (Exception ignoriert) { }
             });
         }));
+    }
+
+    /**
+     * Holt erst den normalen Skip-Kontext. Nur wenn darin eine MAL-Anime-Folge
+     * ohne Episode-Zuordnung steht, werden die dafuer noetigen Anbieterlisten
+     * still nachgelesen. Der Player und sein aktueller Resolver bleiben dabei
+     * auf ihrer eigenen WebView.
+     */
+    private void skipKontext(Consumer<JSONObject> fertig) {
+        final int id = auftrag;
+        final int anfrage = ++introKontextLauf;
+        introStaffelWebViewFreigeben();
+        umgebung.skipKontext((JSONArray) null, kontext -> {
+            if (!introKontextAktuell(id, anfrage)) return;
+            if (!introStaffelnNoetig(kontext)) {
+                fertig.accept(kontext);
+                return;
+            }
+            int gesamt = kontext.optInt("malFolgenGesamt", 0);
+            JSONArray staffeln = folgen == null ? null : folgen.optJSONArray("staffeln");
+            if (staffeln == null || staffeln.length() == 0) {
+                introManifestLesen(id, anfrage, kontext.optInt("season", 0), manifest -> {
+                    if (!introKontextAktuell(id, anfrage)) return;
+                    JSONArray nachgeladen = manifest == null ? null : manifest.optJSONArray("staffeln");
+                    if (nachgeladen == null || nachgeladen.length() == 0) {
+                        introStaffelWebViewFreigeben();
+                        fertig.accept(kontext);
+                        return;
+                    }
+                    introStaffelnSammeln(id, anfrage, kontext, nachgeladen, gesamt, fertig);
+                });
+                return;
+            }
+            introStaffelnSammeln(id, anfrage, kontext, staffeln, gesamt, fertig);
+        });
+    }
+
+    private boolean introKontextAktuell(int id, int anfrage) {
+        return aktuell(id) && anfrage == introKontextLauf;
+    }
+
+    static boolean introStaffelnNoetig(JSONObject kontext) {
+        if (kontext == null || !"anime".equals(kontext.optString("art"))) return false;
+        JSONObject ids = kontext.optJSONObject("ids");
+        return ids != null && ids.optInt("mal", 0) > 0
+            && kontext.optInt("season", 0) > 1
+            && !kontext.has("malEpisode")
+            && kontext.optInt("malFolgenGesamt", 0) > 0
+            && kontext.optInt("malFolgenGesamt", 0) <= 10000;
+    }
+
+    static boolean introWeitereStaffelNoetig(int geleseneFolgen, int malFolgenGesamt) {
+        return geleseneFolgen >= 0 && malFolgenGesamt > 0 && geleseneFolgen < malFolgenGesamt;
+    }
+
+    static boolean introGateBlockiert(JSONObject gate) {
+        return gate == null || gate.optBoolean("offen");
+    }
+
+    interface IntroStaffelLeser {
+        void lesen(int nummer, String url, Consumer<JSONObject> fertig);
+    }
+
+    /** Serielle, MAL-begrenzte Sammlung; Fehler und Challenge liefern null genau einmal. */
+    static final class IntroStaffelSammler {
+        private final JSONArray staffeln;
+        private final String serienAdresse;
+        private final int gesamt;
+        private final Map<Integer, JSONObject> cache;
+        private final IntroStaffelLeser leser;
+        private final Consumer<JSONArray> fertig;
+        private final java.util.function.BooleanSupplier gueltig;
+        private final JSONArray listen = new JSONArray();
+        private int nummer = 1;
+        private int summe;
+        private boolean abgeschlossen;
+
+        IntroStaffelSammler(JSONArray staffeln, String serienAdresse, int gesamt,
+                            Map<Integer, JSONObject> cache, IntroStaffelLeser leser,
+                            java.util.function.BooleanSupplier gueltig, Consumer<JSONArray> fertig) {
+            this.staffeln = staffeln;
+            this.serienAdresse = serienAdresse;
+            this.gesamt = gesamt;
+            this.cache = cache;
+            this.leser = leser;
+            this.fertig = fertig;
+            this.gueltig = gueltig;
+        }
+
+        void starten() { weiter(); }
+
+        private void weiter() {
+            if (abgeschlossen || !gueltig.getAsBoolean()) return;
+            if (!introWeitereStaffelNoetig(summe, gesamt)) {
+                abgeschlossen = true;
+                fertig.accept(listen);
+                return;
+            }
+            if (nummer > 60) { beenden(null); return; }
+            String url = introStaffelUrl(staffeln, nummer, serienAdresse);
+            if (url.isEmpty()) { beenden(null); return; }
+            JSONObject stand = cache.get(nummer);
+            if (stand != null) { staffelGelesen(nummer, stand); return; }
+            final int angefragt = nummer;
+            leser.lesen(angefragt, url, gelesen -> {
+                if (abgeschlossen || !gueltig.getAsBoolean() || angefragt != nummer) return;
+                if (gelesen == null) { beenden(null); return; }
+                cache.put(angefragt, gelesen);
+                staffelGelesen(angefragt, gelesen);
+            });
+        }
+
+        private void staffelGelesen(int angefragt, JSONObject stand) {
+            JSONArray episoden = stand == null ? null : stand.optJSONArray("folgen");
+            if (angefragt != nummer || stand == null || stand.optInt("offeneStaffel") != nummer
+                || episoden == null || episoden.length() == 0) { beenden(null); return; }
+            try { listen.put(new JSONObject(stand.toString())); }
+            catch (Exception ignoriert) { beenden(null); return; }
+            summe += episoden.length();
+            if (summe > gesamt) { beenden(null); return; }
+            nummer++;
+            weiter();
+        }
+
+        private void beenden(JSONArray ergebnis) {
+            if (abgeschlossen) return;
+            abgeschlossen = true;
+            fertig.accept(ergebnis);
+        }
+    }
+
+    private void introStaffelnSammeln(int id, int anfrage, JSONObject ursprung, JSONArray staffeln, int gesamt,
+                                     Consumer<JSONObject> fertig) {
+        IntroStaffelSammler sammler = new IntroStaffelSammler(staffeln, adresse, gesamt,
+            introStaffelCache, (staffel, url, antwort) -> introStaffelLesen(url, staffel, id, anfrage, antwort),
+            () -> introKontextAktuell(id, anfrage), listen -> {
+                if (!introKontextAktuell(id, anfrage)) return;
+                if (listen == null) {
+                    introStaffelWebViewFreigeben();
+                    fertig.accept(ursprung);
+                    return;
+                }
+                umgebung.skipKontext(listen, kontext -> {
+                    if (!introKontextAktuell(id, anfrage)) return;
+                    introStaffelWebViewFreigeben();
+                    fertig.accept(kontext == null ? ursprung : kontext);
+                });
+            });
+        sammler.starten();
+    }
+
+    private void introStaffelMerken(JSONObject stand, int ersatzStaffel) {
+        if (stand == null) return;
+        int nummer = stand.optInt("offeneStaffel", ersatzStaffel);
+        JSONArray episoden = stand.optJSONArray("folgen");
+        if (nummer <= 0 || episoden == null || episoden.length() == 0) return;
+        JSONObject bisher = introStaffelCache.get(nummer);
+        if (bisher != null && bisher.optJSONArray("folgen") != null
+            && bisher.optJSONArray("folgen").length() >= episoden.length()) return;
+        try { introStaffelCache.put(nummer, new JSONObject(stand.toString())); }
+        catch (Exception ignoriert) { }
+    }
+
+    /** Reicht eine Anbieter-Staffel nur fuer dieselbe Serie und exakte Staffelnummer durch. */
+    static String introStaffelUrl(JSONArray staffeln, int nummer, String serienAdresse) {
+        if (staffeln == null || nummer <= 0) return "";
+        for (int i = 0; i < staffeln.length(); i++) {
+            JSONObject eintrag = staffeln.optJSONObject(i);
+            if (eintrag == null || eintrag.optInt("staffel", 0) != nummer) continue;
+            String url = eintrag.optString("url", "").trim();
+            if (gleicheIntroSerie(url, serienAdresse) && staffelAusUrl(url) == nummer) return url;
+            return "";
+        }
+        return "";
+    }
+
+    private static int staffelAusUrl(String url) {
+        try {
+            java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?i)(?:^|/)(?:staffel|season)-(\\d+)/?$")
+                .matcher(new java.net.URI(url).getRawPath());
+            return matcher.find() ? Integer.parseInt(matcher.group(1)) : 0;
+        } catch (Exception ignoriert) { return 0; }
+    }
+
+    private static boolean gleicheIntroSerie(String links, String rechts) {
+        try {
+            java.net.URI a = new java.net.URI(links);
+            java.net.URI b = new java.net.URI(rechts);
+            if (!("https".equalsIgnoreCase(a.getScheme()) || "http".equalsIgnoreCase(a.getScheme()))
+                || !("https".equalsIgnoreCase(b.getScheme()) || "http".equalsIgnoreCase(b.getScheme()))
+                || !a.getHost().equalsIgnoreCase(b.getHost()) || a.getPort() != b.getPort()) return false;
+            String pfadA = a.getRawPath().replaceFirst("(?i)/(?:staffel|season)-\\d+(?:/(?:episode|folge)-\\d+)?/?$", "");
+            String pfadB = b.getRawPath().replaceFirst("(?i)/(?:staffel|season)-\\d+(?:/(?:episode|folge)-\\d+)?/?$", "");
+            return !pfadA.isEmpty() && pfadA.equalsIgnoreCase(pfadB);
+        } catch (Exception ignoriert) { return false; }
+    }
+
+    private static boolean gleicherIntroHost(String links, String rechts) {
+        try {
+            java.net.URI a = new java.net.URI(links);
+            java.net.URI b = new java.net.URI(rechts);
+            return a.getHost() != null && b.getHost() != null
+                && a.getHost().equalsIgnoreCase(b.getHost());
+        } catch (Exception ignoriert) { return false; }
+    }
+
+    /** Eine separate WebView liest die Listen ohne Challenge-Dialog oder Resolver-Navigation. */
+    private void introStaffelLesen(String url, int nummer, int id, int anfrage, Consumer<JSONObject> fertig) {
+        if (!introKontextAktuell(id, anfrage)) return;
+        if (staffelAusUrl(url) != nummer || !gleicheIntroSerie(url, adresse)) {
+            fertig.accept(null);
+            return;
+        }
+        if (introStaffelSkript != null) {
+            introStaffelSeiteLaden(url, nummer, false, id, introStaffelSkript, fertig);
+            return;
+        }
+        kern.rufe("seitendaten.uebersichtSkript", (wert, fehler) -> {
+            if (!introKontextAktuell(id, anfrage)) return;
+            if (fehler != null || wert == null) { fertig.accept(null); return; }
+            try {
+                introStaffelSkript = new JSONTokener(wert).nextValue().toString();
+                introStaffelSeiteLaden(url, nummer, false, id, introStaffelSkript, fertig);
+            } catch (Exception ignoriert) { fertig.accept(null); }
+        });
+    }
+
+    private void introManifestLesen(int id, int anfrage, int offeneStaffel,
+                                    Consumer<JSONObject> fertig) {
+        if (!introKontextAktuell(id, anfrage)) return;
+        if (offeneStaffel <= 0 || Folgen.folgenText(adresse).isEmpty()
+            || !gleicheIntroSerie(adresse, adresse)) { fertig.accept(null); return; }
+        if (introStaffelSkript != null) {
+            introStaffelSeiteLaden(adresse, offeneStaffel, true, id, introStaffelSkript, fertig);
+            return;
+        }
+        kern.rufe("seitendaten.uebersichtSkript", (wert, fehler) -> {
+            if (!introKontextAktuell(id, anfrage)) return;
+            if (fehler != null || wert == null) { fertig.accept(null); return; }
+            try {
+                introStaffelSkript = new JSONTokener(wert).nextValue().toString();
+                introStaffelSeiteLaden(adresse, offeneStaffel, true, id, introStaffelSkript, fertig);
+            } catch (Exception ignoriert) { fertig.accept(null); }
+        });
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private void introStaffelSeiteLaden(String url, int nummer, boolean manifest, int id, String script,
+                                        Consumer<JSONObject> fertig) {
+        if (!aktuell(id)) { fertig.accept(null); return; }
+        WebView view = introStaffelWebView;
+        if (view == null) {
+            view = new WebView(activity);
+            introStaffelWebView = view;
+            WebSettings settings = view.getSettings();
+            settings.setJavaScriptEnabled(true);
+            settings.setDomStorageEnabled(true);
+            settings.setUserAgentString(kennung);
+            settings.setAllowFileAccess(false);
+            settings.setAllowContentAccess(false);
+            settings.setSupportMultipleWindows(false);
+            CookieManager.getInstance().setAcceptCookie(true);
+            CookieManager.getInstance().setAcceptThirdPartyCookies(view, true);
+            view.setWebChromeClient(new WebChromeClient());
+            view.setVisibility(View.INVISIBLE);
+            wurzel.addView(view, 0, new FrameLayout.LayoutParams(-1, -1));
+        }
+        final WebView leser = view;
+        final int lauf = ++introStaffelLauf;
+        final boolean[] fehler = { false };
+        final boolean[] erledigt = { false };
+        final boolean[] auslesenLaeuft = { false };
+        if (introStaffelFrist != null) handler.removeCallbacks(introStaffelFrist);
+        Runnable frist = () -> introStaffelAntwort(id, lauf, leser, erledigt, fertig, null);
+        introStaffelFrist = frist;
+        handler.postDelayed(frist, INTRO_STAFFEL_FRIST_MS);
+        leser.stopLoading();
+        leser.setWebViewClient(new WebViewClient() {
+            @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
+                String scheme = r.getUrl().getScheme();
+                boolean web = "https".equals(scheme) || "http".equals(scheme);
+                if (web && r.isForMainFrame()
+                    && !gleicherIntroHost(r.getUrl().toString(), url)) {
+                    fehler[0] = true;
+                    introStaffelAntwort(id, lauf, leser, erledigt, fertig, null);
+                    return true;
+                }
+                return !web;
+            }
+            @Override public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest r) {
+                if (!r.isForMainFrame() && filter.shouldBlock(r.getUrl().toString(), anbieter)) {
+                    return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream(new byte[0]));
+                }
+                return null;
+            }
+            @Override public void onReceivedError(WebView v, WebResourceRequest r,
+                                                  android.webkit.WebResourceError e) {
+                if (r != null && r.isForMainFrame()) {
+                    fehler[0] = true;
+                    introStaffelAntwort(id, lauf, leser, erledigt, fertig, null);
+                }
+            }
+            @Override public void onReceivedHttpError(WebView v, WebResourceRequest r,
+                                                      WebResourceResponse e) {
+                if (r != null && r.isForMainFrame()) {
+                    fehler[0] = true;
+                    introStaffelAntwort(id, lauf, leser, erledigt, fertig, null);
+                }
+            }
+            @Override public void onPageFinished(WebView v, String geladen) {
+                if (erledigt[0] || auslesenLaeuft[0]) return;
+                boolean richtigeStaffelseite = manifest
+                    ? staffelAusUrl(geladen) == 0 || staffelAusUrl(geladen) == nummer
+                    : staffelAusUrl(geladen) == nummer;
+                if (!aktuell(id) || lauf != introStaffelLauf || introStaffelWebView != leser
+                    || fehler[0] || !richtigeStaffelseite
+                    || !gleicheIntroSerie(geladen, adresse)) {
+                    introStaffelAntwort(id, lauf, leser, erledigt, fertig, null);
+                    return;
+                }
+                auslesenLaeuft[0] = true;
+                leser.evaluateJavascript(Verifizierung.zustandScript(), gateWert -> {
+                    if (erledigt[0] || !aktuell(id) || lauf != introStaffelLauf
+                        || introStaffelWebView != leser) return;
+                    JSONObject gate = javascriptObjekt(gateWert);
+                    if (introGateBlockiert(gate)) {
+                        introStaffelAntwort(id, lauf, leser, erledigt, fertig, null);
+                        return;
+                    }
+                    leser.evaluateJavascript(script, wert -> {
+                        if (erledigt[0] || !aktuell(id) || lauf != introStaffelLauf
+                            || introStaffelWebView != leser) return;
+                        try {
+                            JSONObject stand = new JSONObject(wert);
+                            JSONArray episoden = stand.optJSONArray("folgen");
+                            JSONArray staffelListe = stand.optJSONArray("staffeln");
+                            boolean listeGueltig = manifest
+                                ? staffelListe != null && staffelListe.length() > 0
+                                : episoden != null && episoden.length() > 0;
+                            if (stand.optInt("offeneStaffel") != nummer || !listeGueltig) {
+                                introStaffelAntwort(id, lauf, leser, erledigt, fertig, null);
+                                return;
+                            }
+                            introStaffelAntwort(id, lauf, leser, erledigt, fertig, stand);
+                        } catch (Exception ignoriert) {
+                            introStaffelAntwort(id, lauf, leser, erledigt, fertig, null);
+                        }
+                    });
+                });
+            }
+        });
+        leser.loadUrl(url);
+    }
+
+    private void introStaffelAntwort(int id, int lauf, WebView leser, boolean[] erledigt,
+                                     Consumer<JSONObject> fertig, JSONObject stand) {
+        if (erledigt[0]) return;
+        if (!aktuell(id) || lauf != introStaffelLauf || introStaffelWebView != leser) return;
+        erledigt[0] = true;
+        if (introStaffelFrist != null) {
+            handler.removeCallbacks(introStaffelFrist);
+            introStaffelFrist = null;
+        }
+        if (stand == null && leser != null) leser.stopLoading();
+        fertig.accept(stand);
     }
 
     /*
@@ -1636,11 +2018,27 @@ final class DirektWiedergabe {
         if (geschlossen) return;
         geschlossen = true;
         auftrag++;
+        introStaffelLauf++;
         verifizierungAbbrechen(false);
         kern.rufe("direkt-android.abbrechen", (w, f) -> { });
         handler.removeCallbacksAndMessages(null);
         spieler.schliessen();
         seiteFreigeben();
+        introStaffelWebViewFreigeben();
         if (wurzel.getParent() instanceof ViewGroup) ((ViewGroup) wurzel.getParent()).removeView(wurzel);
+    }
+
+    private void introStaffelWebViewFreigeben() {
+        WebView view = introStaffelWebView;
+        introStaffelWebView = null;
+        introStaffelLauf++;
+        if (introStaffelFrist != null) {
+            handler.removeCallbacks(introStaffelFrist);
+            introStaffelFrist = null;
+        }
+        if (view == null) return;
+        view.stopLoading();
+        if (view.getParent() instanceof ViewGroup) ((ViewGroup) view.getParent()).removeView(view);
+        view.destroy();
     }
 }

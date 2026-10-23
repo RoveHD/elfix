@@ -64,6 +64,7 @@ OHNE_RELAY.push("animefillertest");
 OHNE_RELAY.push("filler-desktopintegrationtest");
 OHNE_RELAY.push("staffelwechseltest");
 OHNE_RELAY.push("skipintegrationtest");
+OHNE_RELAY.push("skipstaffeltest");
 OHNE_RELAY.push("untertitelwahltest");
 OHNE_RELAY.push("searchgroupingtest");
 OHNE_RELAY.push("spielervorschautest");

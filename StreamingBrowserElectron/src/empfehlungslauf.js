@@ -257,10 +257,54 @@ function erstellen(umgebung) {
     }
   }
 
+  // Manche Anbieter teilen EINEN MAL-Eintrag in mehrere Staffeln. Die
+  // Verschiebung ist erst belegt, wenn jede Folge dieses Eintrags vorliegt:
+  // lueckenlose Staffeln ab 1, lueckenlose Folgen je Staffel und genau die
+  // MAL-Gesamtzahl. Ein spaeterer Cour darf ausserhalb dieses Prefix liegen.
+  function malEpisodeAusStaffeln(url, episode, gesamt, listen) {
+    if (!Number.isSafeInteger(gesamt) || gesamt <= 0 || gesamt > 10000
+      || !Array.isArray(listen) || listen.length < 2 || listen.length > 60) return 0;
+    const basis = seriesPageUrl(url);
+    const geordnet = listen.slice().sort((a, b) => Number(a?.offeneStaffel) - Number(b?.offeneStaffel));
+    let summe = 0;
+    let zugeordnet = 0;
+    for (let index = 0; index < geordnet.length; index++) {
+      const stand = geordnet[index];
+      const nummer = index + 1;
+      if (stand?.offeneStaffel !== nummer || !Array.isArray(stand.staffeln)
+        || !Array.isArray(stand.folgen) || !stand.folgen.length) return 0;
+      // Alle gelesenen Seiten muessen denselben vollstaendigen Staffel-Prefix
+      // ausweisen. Staffel 0 ist die Filmsammlung und zaehlt nicht mit.
+      const bekannte = new Set();
+      for (const staffel of stand.staffeln) {
+        if (staffel?.staffel === 0 || staffel?.staffel > geordnet.length) continue;
+        const pfad = (() => { try { return new URL(staffel?.url).pathname; } catch { return ""; } })();
+        const ausUrl = pfad.match(/\/(?:staffel|season)-(\d+)(?:\/|$)/i);
+        if (!Number.isSafeInteger(staffel?.staffel) || staffel.staffel < 1
+          || Number(ausUrl?.[1]) !== staffel.staffel || seriesPageUrl(staffel.url) !== basis
+          || bekannte.has(staffel.staffel)) return 0;
+        bekannte.add(staffel.staffel);
+      }
+      if (bekannte.size !== geordnet.length) return 0;
+      const folgen = stand.folgen.slice().sort((a, b) => Number(a?.folge) - Number(b?.folge));
+      for (let folgeIndex = 0; folgeIndex < folgen.length; folgeIndex++) {
+        const folge = folgen[folgeIndex];
+        const kennung = episodeIdentity(folge?.url);
+        if (folge?.staffel !== nummer || folge?.folge !== folgeIndex + 1 || folge.gesperrt
+          || kennung?.key !== episode.key || kennung.season !== nummer
+          || kennung.episode !== folge.folge || seriesPageUrl(folge.url) !== basis) return 0;
+      }
+      if (episode.season === nummer && episode.episode <= folgen.length) zugeordnet = summe + episode.episode;
+      summe += folgen.length;
+      if (summe > gesamt) return 0;
+    }
+    return summe === gesamt ? zugeordnet : 0;
+  }
+
   // Skip-Daten brauchen IDs, keine neue Titelsuche beim Streamstart. Vorhandene
   // Anbieter- und Metadatencaches haben Vorrang; nur fehlende IDs werden ueber
   // den bestehenden, deduplizierten Metadatenclient aufgeloest.
-  async function skipKontext(name, url) {
+  async function skipKontext(name, url, optionen = {}) {
     const kind = candidateMediaType(url);
     if (!kind) return null;
     const film = isExplicitFilmUrl(url);
@@ -276,7 +320,10 @@ function erstellen(umgebung) {
     const ids = {};
     if (/^tt\d{6,10}$/.test(String(meta?.imdb || ""))) ids.imdb = meta.imdb;
     let extern = animeFilm ? null : metadatenAusCache(name, url);
-    if (!extern && !ids.imdb && !animeFilm) {
+    // IMDb reicht fuer Serien-/Filmquellen, identifiziert aber keine AniSkip-
+    // Episode. Auch mit Anbieter-IMDb braucht Anime den bestehenden
+    // Metadatenweg, um seine MAL-ID zu erhalten.
+    if (!extern && (!ids.imdb || art === "anime") && !animeFilm) {
       try {
         const client = umgebung.metadaten();
         const roh = metadatenWunsch(name, url, meta);
@@ -296,12 +343,18 @@ function erstellen(umgebung) {
       }
     }
     const kontext = { art, ids, season: episode?.season || 0, episode: episode?.episode || 0 };
-    // AniList-Metadaten identifizieren hier den Haupttitel, nicht jede weitere
-    // Anbieter-Staffel. Ohne explizite Cour-Zuordnung nur Staffel 1 benutzen;
-    // IMDb/TMDB-Quellen koennen weitere Staffeln weiterhin direkt adressieren.
+    if (art === "anime" && ids.mal && Number.isSafeInteger(extern?.folgenGesamt)
+      && extern.folgenGesamt > 0 && extern.folgenGesamt <= 10000) {
+      kontext.malFolgenGesamt = extern.folgenGesamt;
+    }
+    // Ohne belegte vollstaendige Aufteilung identifiziert die MAL-ID nur die
+    // erste Anbieter-Staffel. Keine Cour-IDs oder Staffelverschiebungen raten.
     if (art === "anime" && episode?.season === 1 && ids.mal
       && (!extern?.folgenGesamt || episode.episode <= extern.folgenGesamt)) {
       kontext.malEpisode = episode.episode;
+    } else if (art === "anime" && ids.mal && episode) {
+      const malEpisode = malEpisodeAusStaffeln(url, episode, extern?.folgenGesamt, optionen.staffelListen);
+      if (malEpisode) kontext.malEpisode = malEpisode;
     }
     return kontext;
   }

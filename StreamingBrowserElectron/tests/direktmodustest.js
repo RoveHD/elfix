@@ -153,8 +153,10 @@ pruefe("Erkannt wird sie am Inhalt, nicht an der Adresse",
   "die Abfrage kommt unter derselben Adresse zurueck, die man angefragt hat");
 pruefe("Danach liegt der Player wieder oben",
   /async function menschentorLoesenLassen[\s\S]*?finally[\s\S]*?addChildView\(spielerView\)/.test(haupt));
+const werkbankStart = haupt.indexOf("async function werkbankAn(");
+const werkbankCode = haupt.slice(werkbankStart, haupt.indexOf("\n}", werkbankStart) + 2);
 pruefe("Und jede Werkbankseite geht durch diese Pruefung",
-  /async function werkbankAn[\s\S]{0,900}?menschentorErkennen\(view\)/.test(haupt),
+  werkbankStart >= 0 && /menschentorErkennen\(view\)/.test(werkbankCode),
   "nicht nur der erste Aufruf");
 pruefe("Auch eine Menschpruefung auf der Hoster-Seite wird sichtbar",
   /bestaetigen: \(abbruch, challengeUrl = ""\) => challengeUrl[\s\S]{0,300}?cfAdresseVerifizieren[\s\S]{0,300}?menschentorLoesenLassen\(provider, view/.test(haupt)

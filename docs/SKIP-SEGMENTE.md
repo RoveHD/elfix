@@ -74,8 +74,13 @@ Nicht endliche, negative, leere oder außerhalb der Videolänge liegende Interva
 erzeugen keinen Knopf. Antwort-Identitäten werden, soweit mitgeliefert, geprüft.
 
 AniSkip-Mischsegmente `mixed-op`/`mixed-ed` werden nicht angeboten, weil sie
-Handlung enthalten können. Die gemeldete Episodenlänge muss bis auf zwei
-Sekunden zur abgespielten Datei passen. ELFIX skaliert oder verschiebt sie nicht.
+Handlung enthalten können. Die gemeldete Episodenlänge darf höchstens 20 Sekunden
+abweichen, entsprechend dem [Laufzeitfilter des AniSkip-Servers](https://github.com/aniskip/aniskip-api/blob/main/src/repositories/skip-times.repository.ts).
+Nachprüfung am 23. Oktober 2026: Black Clover, MAL-Folgen 71 und 79, liefert
+Intros mit 2,025 bzw. 6,877 Sekunden Laufzeitabweichung zur deutschen Datei;
+die frühere Zwei-Sekunden-Grenze verwarf beide. ELFIX skaliert oder verschiebt
+keine Zeitgrenzen; außerhalb des Videos liegende Segmente werden weiter verworfen.
+Gleiche Gesamtlänge allein garantiert allerdings keine identische Schnittfassung.
 SkipDBs `out-of-range` wird verworfen; dessen dokumentierte serverseitige
 konservative Anpassung wird übernommen, ohne ein zweites Mal zu verschieben.
 Der Schätzwert `intro_length_estimate_ms` wird nicht verwendet. IntroDB liefert
@@ -96,15 +101,25 @@ dafür wird kein zusätzlicher API-Request eingeführt.
 
 Fehlen IDs, wird ausschließlich die schon vorhandene Metadatenauflösung mit
 ihrem Cache, ihrer Deduplizierung und Ausfallsperre benutzt. Keine neue
-Titel-/ID-Suchmaschine, kein neuer Anbieter-Seitenabruf und keine neue
+Titel-/ID-Suchmaschine und keine neue
 TMDB-Key-Anforderung. Ein vorhandenes Relay kann weiterhin seine bisherige
 Metadatenkonfiguration verwenden. Ohne passende IDs bleibt die Skip-Liste leer.
 AniList-IDs sind selbst keine Episoden-IDs für AniSkip.
 
-Die aktuelle ELFIX-Metadatenzuordnung kennt noch keine verifizierte Abbildung
-aller Anbieter-Staffeln auf einzelne MAL-Cours. Daher wird die Haupttitel-MAL-ID
-nur für Staffel 1 und innerhalb einer bekannten Episodenzahl verwendet.
-Weitere Staffeln können über IMDb-/TMDB-Quellen Segmente erhalten. Anime-Filme
+Eine Anbieter-IMDb verhindert bei Anime nicht mehr die zusätzliche MAL-Auflösung.
+Für später liegende Anbieter-Staffeln liest ELFIX die vorhandenen Folgenübersichten
+im Hintergrund bis zur geprüften MAL-Gesamtzahl. Nur vollständige, lückenlose
+Staffeln derselben Serie und ein exakter Abschluss an einer Staffelgrenze erlauben
+die durchgehende MAL-Folgennummer. Beispiel Black Clover: 51 + 51 + 52 + 16 = 170;
+Anbieter-S2/F20 wird zu MAL-Folge 71, S2/F28 zu Folge 79. Staffel 5 gehört nicht
+zu diesem Eintrag und wird nicht mit dessen ID abgefragt. Fehlende Übersichten,
+Doppelfolgen, widersprüchliche Links und ungesicherte IDs ergeben keinen Offset.
+Die Abfragen verwenden die bestehende Folgenleselogik und halten den Videostart
+nicht auf; sie öffnen auch keine zusätzliche Cloudflare-Bestätigung.
+
+Andere Cours erhalten weiterhin keine geratenen MAL-IDs. Ohne belegte Aufteilung
+gilt die bisherige Staffel-1-Zuordnung, weitere Staffeln können über IMDb-/TMDB-Quellen
+Segmente erhalten. Anime-Filme
 unter einem Franchise erhalten niemals dessen Serien-ID; dafür ist eine
 gesonderte Filmidentität nötig. Unsichere Zuordnungen erzeugen keine geratenen
 Skip-Zeiten.
@@ -113,6 +128,8 @@ Skip-Zeiten.
 
 - Höchstens 512 Einträge; Cache-Schlüssel enthält Inhaltstyp, IDs,
   Staffel/Episode/MAL-Episode und Videolänge.
+- Cache-Version 2 verwirft alte Ergebnisse nach der korrigierten AniSkip-Prüfung;
+  auch zuvor als leer gespeicherte Folgen werden erneut geprüft.
 - Erfolgreiche Ergebnisse: 7 Tage. Keine Daten: 6 Stunden.
   Abruf-/API-Fehler einschließlich Teilausfällen: 5 Minuten.
 - Identische laufende Inhalts- und URL-Abfragen werden zusammengelegt.
