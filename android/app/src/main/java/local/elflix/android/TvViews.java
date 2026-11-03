@@ -516,6 +516,21 @@ final class TvViews {
      * <p>Und sie ist eine {@link Fokusreihe}: links und rechts bleiben in der
      * Reihe, oben und unten halten die Spalte. Jede Reihe der App laeuft hier
      * durch, deshalb steht die Regel hier und nicht an den Aufrufstellen.
+     *
+     * <p><b>Alle Karten einer Reihe sind gleich hoch.</b> Das entscheidet die
+     * Reihe und nicht die Karte - gemeldet war das Gegenteil: "die Karten sind
+     * unterschiedlich hoch, je nachdem wie lang der Titel ist". Sie waren es,
+     * und zwangslaeufig. Eine Karte waechst mit ihrem Inhalt: drei Zeilen
+     * Titel statt einer, eine Unterzeile, die umbricht, die Zeile aus der
+     * Runde, die nur bei manchen dasteht. Nebeneinander ergab das eine Reihe
+     * mit ausgefranster Unterkante.
+     *
+     * <p>Jede Karte bekommt deshalb {@code MATCH_PARENT} als Hoehe. Eine
+     * waagerechte {@code LinearLayout} vermisst damit zuerst alle Karten,
+     * nimmt die hoechste und zieht die uebrigen genau darauf
+     * ({@code forceUniformHeight}). Das ist nicht derselbe Weg wie eine feste
+     * Hoehe: die Reihe ist so hoch, wie ihre hoechste Karte sein muss, und
+     * keine Zeile mehr. Die Breite bleibt Sache der Karte.
      */
     static HorizontalScrollView reihe(Context context, List<View> karten) {
         Fokusreihe scroll = new Fokusreihe(context);
@@ -536,6 +551,7 @@ final class TvViews {
                 ? (LinearLayout.LayoutParams) karte.getLayoutParams()
                 : new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            params.height = ViewGroup.LayoutParams.MATCH_PARENT;
             if (i > 0) params.leftMargin = dp(context, ITEM_GAP);
             leiste.addView(karte, params);
         }
@@ -551,7 +567,14 @@ final class TvViews {
         return kind instanceof LinearLayout ? (LinearLayout) kind : null;
     }
 
-    /** Eine Kachel an eine bestehende Reihe anhaengen - ohne die Reihe neu zu bauen. */
+    /**
+     * Eine Kachel an eine bestehende Reihe anhaengen - ohne die Reihe neu zu bauen.
+     *
+     * <p>Dieselbe Hoehenregel wie beim Bauen: nachgelegte Kacheln sind so hoch
+     * wie die uebrigen. Eine Reihe, die beim Nachlegen eine Kachel bekommt,
+     * die aus ihrer Unterkante herausragt, waere genau der Fehler, den die
+     * Regel behebt - nur zeitversetzt.
+     */
     static void kachelAnhaengen(HorizontalScrollView reihe, View karte) {
         LinearLayout leiste = leisteVon(reihe);
         if (leiste == null) return;
@@ -559,6 +582,7 @@ final class TvViews {
             ? (LinearLayout.LayoutParams) karte.getLayoutParams()
             : new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.height = ViewGroup.LayoutParams.MATCH_PARENT;
         if (leiste.getChildCount() > 0) params.leftMargin = dp(reihe.getContext(), ITEM_GAP);
         leiste.addView(karte, params);
     }

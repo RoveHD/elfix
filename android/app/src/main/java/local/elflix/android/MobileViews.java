@@ -1202,9 +1202,21 @@ final class MobileViews {
         leiste.setClipChildren(false);
         leiste.setClipToPadding(false);
         for (int i = 0; i < karten.size(); i += 1) {
+            // Alle Karten einer Reihe sind gleich hoch, und das entscheidet die
+            // Reihe. Gemeldet war das Gegenteil: "die Karten sind
+            // unterschiedlich hoch, je nachdem wie lang der Titel ist". Sie
+            // waren es zwangslaeufig - eine Karte waechst mit ihrem Inhalt:
+            // drei Zeilen Titel statt einer, eine Unterzeile, die umbricht,
+            // die Zeile aus der Runde, die nur bei manchen dasteht.
+            // Nebeneinander ergab das eine Reihe mit ausgefranster Unterkante.
+            //
+            // MATCH_PARENT in einer waagerechten LinearLayout heisst: erst
+            // alle Karten vermessen, die hoechste nehmen, die uebrigen genau
+            // darauf ziehen (forceUniformHeight). Also so hoch, wie die
+            // hoechste Karte sein muss - und keine Zeile mehr.
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 kartenBreiteDp > 0 ? dp(context, kartenBreiteDp) : ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
+                ViewGroup.LayoutParams.MATCH_PARENT);
             if (i > 0) params.leftMargin = dp(context, ITEM_GAP);
             leiste.addView(karten.get(i), params);
         }

@@ -109,3 +109,22 @@ Jahresrückblick blendet sich in seiner Saison von selbst ein. Mitten in der
 Seite war das eine Karte, die niemand bestellt hatte und die alles darunter um
 eine Bildschirmhöhe nach unten schob. Die Dezember-Regel bleibt; sie steht nur
 nicht mehr im Weg.
+
+## Gleich hohe Karten
+
+Gemeldet: „die Karten sind unterschiedlich hoch, je nachdem wie lang der Titel
+ist". Sie waren es zwangsläufig. Eine Karte wächst mit ihrem Inhalt — drei
+Zeilen Titel statt einer, eine Unterzeile, die umbricht, die Zeile aus der
+Runde, die nur bei manchen dasteht. Nebeneinander ergab das eine Reihe mit
+ausgefranster Unterkante.
+
+Das entscheidet jetzt die Reihe und nicht die Karte: jede Karte bekommt
+`MATCH_PARENT` als Höhe (`TvViews.reihe`, `MobileViews.reihe`, und beim
+Nachlegen `TvViews.kachelAnhaengen`). Eine waagerechte `LinearLayout` vermisst
+damit zuerst alle Karten, nimmt die höchste und zieht die übrigen genau darauf
+(`forceUniformHeight`). Das ist ausdrücklich keine feste Höhe: die Reihe ist so
+hoch, wie ihre höchste Karte sein muss, und keine Zeile mehr. Die Breite bleibt
+Sache der Karte.
+
+Der Text bleibt dabei oben am Poster; freier Platz fällt unten an. Das Raster
+der Entdeckungsseite hatte das Problem nie — dort gibt die Zelle die Höhe vor.
