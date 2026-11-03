@@ -346,6 +346,7 @@ mit und lassen sich vollständig prüfen.
 | [docs/WATCHPARTY.md](docs/WATCHPARTY.md) | Watchparty, Warteschlange, Glücksrad und der Betrieb des Relays |
 | [docs/MEINE-GERAETE.md](docs/MEINE-GERAETE.md) | Geräteabgleich, was abgeglichen wird und was das Relay sieht |
 | [docs/FERNBEDIENUNG.md](docs/FERNBEDIENUNG.md) | Handy als Fernbedienung, Kopplung und Installation als App |
+| [docs/STEUERKREUZ.md](docs/STEUERKREUZ.md) | Fokus und Steuerkreuz am Fernseher, Kopfzeile, Anbieterseite |
 | [docs/INTRO-UND-FASSUNG.md](docs/INTRO-UND-FASSUNG.md) | Gelernte Intro-Marken, Sub/Dub und Untertitelspur |
 | [docs/SKIP-SEGMENTE.md](docs/SKIP-SEGMENTE.md) | Öffentliche Skip-Daten im eigenen Player |
 | [docs/PLAYER-KOMFORT.md](docs/PLAYER-KOMFORT.md) | Mini-Player, Gesten, Bildvorschau, zusammengefasste Suche |

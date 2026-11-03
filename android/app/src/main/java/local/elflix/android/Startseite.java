@@ -20,7 +20,7 @@ import java.util.List;
  * ueber denselben Geraeteabgleich wie alles andere, und ein zweiter Satz Namen
  * waere dabei nur eine Uebersetzungsstelle, die etwas verliert. Was am Rechner
  * an ist, ist auch hier an - bis auf {@code showReview}, der dort ebenfalls aus
- * beginnt.
+ * beginnt, und {@code showProviders}, den es dort nicht gibt.
  */
 public final class Startseite {
     private static final String PREFS = "elflix_startseite";
@@ -55,6 +55,21 @@ public final class Startseite {
      * dann gehoert er auch in dieselbe Liste wie die uebrigen Reihen.
      */
     public static final String KALENDER = "showCalendar";
+    /**
+     * Der Anbieterrost.
+     *
+     * <p>Auch ein eigener Schluessel und keiner vom Rechner: dort stehen die
+     * Anbieter in der Seitenleiste, nicht auf der Startseite.
+     *
+     * <p>Er beginnt aus, und das ist eine Aenderung. Die Kacheln standen
+     * mitten in der Startseite - gemeldet als das, was sie dort waren: eine
+     * Reihe, durch die man jedes Mal hindurchblaettert, um an das zu kommen,
+     * weswegen man die App aufgemacht hat. Weg sind die Anbieter damit nicht;
+     * sie haben ihre eigene Seite bekommen (am Fernseher den Knopf "Anbieter"
+     * in der Kopfzeile, auf dem Telefon den oben rechts). Wer sie trotzdem
+     * lieber gleich auf der Startseite hat, schaltet sie hier wieder ein.
+     */
+    public static final String ANBIETER = "showProviders";
 
     /** Die Liste in der Reihenfolge, in der die Reihen auf dem Bildschirm stehen. */
     public static final List<Reihe> REIHEN = Arrays.asList(
@@ -70,6 +85,10 @@ public final class Startseite {
             "Vorschläge aus deinem Verlauf.", true),
         new Reihe(KATEGORIEN, "Anime, Serien und Filme",
             "Die drei Vorschlagsreihen nach Art.", true),
+        new Reihe(ANBIETER, "Deine Anbieter",
+            "Die Anbieterkacheln mitten auf der Startseite. Aus steht sie auf ihrer eigenen "
+                + "Seite - am Fernseher \"Anbieter\" in der Kopfzeile, am Telefon oben rechts.",
+            false),
         new Reihe(RUECKBLICK, "Rückblick",
             "Deine gemessene Zeit und der Jahresrückblick auf der Startseite - "
                 + "am Telefon wie am Fernseher. Im Dezember steht der Jahresrückblick "

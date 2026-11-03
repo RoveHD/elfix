@@ -1859,6 +1859,12 @@ public class MainActivity extends Activity {
         View logo = brandLogoView();
         appChrome.addView(logo, new LinearLayout.LayoutParams(dp(96), dp(30)));
         appChrome.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
+        // Der Weg zu den Anbietern. Die untere Leiste ist voll - fuenf Reiter
+        // sind das Aeusserste, was dort lesbar bleibt -, und auf der
+        // Startseite stehen die Kacheln nicht mehr von selbst. Also hier, wo
+        // er auf jeder eigenen Seite dasteht.
+        appChrome.addView(MobileViews.iconButton(this, R.drawable.ic_nav_anbieter,
+            this::zeigeAnbieter), new LinearLayout.LayoutParams(dp(MobileViews.TOUCH_TARGET), dp(MobileViews.TOUCH_TARGET)));
         appChrome.addView(MobileViews.iconButton(this, R.drawable.ic_nav_search,
             () -> showGlobalSearch("")), new LinearLayout.LayoutParams(dp(MobileViews.TOUCH_TARGET), dp(MobileViews.TOUCH_TARGET)));
 
@@ -2006,7 +2012,10 @@ public class MainActivity extends Activity {
         // Geraets groesser oder kommt ein Knopf dazu, wandert die Leiste,
         // statt ein Wort abzuschneiden - und das Steuerkreuz zieht den Knopf,
         // auf dem der Fokus steht, von selbst in den sichtbaren Teil.
-        HorizontalScrollView kopfSchieber = new HorizontalScrollView(this);
+        // Eine Fokusreihe und keine gewoehnliche: rechts neben "Einstellungen"
+        // ist Schluss, statt dass der Fokus in die Seite darunter fiele. Die
+        // Spalte haelt sie nicht - siehe den Grund im Konstruktor.
+        HorizontalScrollView kopfSchieber = new Fokusreihe(this, false);
         kopfSchieber.setHorizontalScrollBarEnabled(false);
         kopfSchieber.setOverScrollMode(View.OVER_SCROLL_NEVER);
         kopfSchieber.setFillViewport(true);
@@ -2025,6 +2034,12 @@ public class MainActivity extends Activity {
         // unteren Leiste; die wird am Fernseher ausgeblendet.
         kopfLeiste.addView(tvNavTab("home", R.drawable.ic_nav_home, "Start",
             this::showHome), headerSlot());
+        // Die Anbieter. Sie standen als Reihe auf der Startseite und sonst
+        // nirgends - wer sie dort ausblendet, hatte keinen Weg mehr zu ihnen.
+        // Jetzt stehen sie hier, auf jeder Seite erreichbar, und die Reihe auf
+        // der Startseite ist freiwillig geworden.
+        kopfLeiste.addView(tvNavTab("anbieter", R.drawable.ic_nav_anbieter, "Anbieter",
+            this::zeigeAnbieter), headerSlot());
         kopfLeiste.addView(tvNavTab("search", R.drawable.ic_nav_search, "Suche",
             () -> showGlobalSearch("")), headerSlot());
         kopfLeiste.addView(tvNavTab("favorites", R.drawable.ic_nav_favorite, "Favoriten",
@@ -2153,10 +2168,12 @@ public class MainActivity extends Activity {
     /**
      * Highlights the tab matching the current screen.
      *
-     * <p>Zwei Bildschirme haben keinen eigenen Reiter und behalten deshalb den
-     * der Startseite: die Anbieteransicht und die Entdeckungsseite. Beide
-     * fuehren von dort weg und wieder dorthin zurueck - waehrenddessen gar
-     * keinen Reiter leuchten zu lassen, saehe aus wie ein Fehler.
+     * <p>Drei Bildschirme haben auf dem Telefon keinen eigenen Reiter und
+     * behalten deshalb den der Startseite: die Anbieteransicht, die
+     * Entdeckungsseite und die Anbieterseite (sie haengt dort am Knopf oben
+     * rechts, am Fernseher dagegen an einem eigenen Kopfziel). Alle drei
+     * fuehren von der Startseite weg und wieder dorthin zurueck - waehrenddessen
+     * gar keinen Reiter leuchten zu lassen, saehe aus wie ein Fehler.
      */
     private void updateBottomNav() {
         String active = bottomNavTabs.containsKey(currentScreen) || tvNavTabs.containsKey(currentScreen)
@@ -2461,11 +2478,12 @@ public class MainActivity extends Activity {
         }
 
         // Dieselbe Reihenfolge wie am Rechner: Neue Folgen, Weiterschauen,
-        // Gemeinsam weiterschauen, YouTube - und erst danach der Anbieterrost.
-        // Er stand hier bisher davor, weil es am Fernseher keine Seitenleiste
-        // gibt und die Anbieter der Weg zu allem sind. Das bleibt richtig, nur
-        // nicht *vor* dem, was gerade laeuft: mit der Fernbedienung ist jede
-        // Reihe darueber ein Druck mehr, bevor man weiterschauen kann.
+        // Gemeinsam weiterschauen, YouTube. Der Anbieterrost stand hier
+        // einmal davor und dann dahinter, weil es am Fernseher keine
+        // Seitenleiste gibt und die Anbieter der Weg zu allem sind. Dieser
+        // Weg fuehrt jetzt ueber die Kopfzeile, und damit ist die Reihe hier
+        // keine Pflicht mehr: mit der Fernbedienung ist jede Reihe ein Druck
+        // mehr, bevor man weiterschauen kann.
         boolean etwasGezeigt = tvNeueFolgenReihe(page);
         eigeneGeraeteLiveKarteAnhaengen(page, true, TvViews.SECTION_GAP);
 
@@ -2488,21 +2506,20 @@ public class MainActivity extends Activity {
                 Bibliothek.WEITERSCHAUEN);
         }
 
-        addSpacing(page, TvViews.sectionHeader(this, "Deine Anbieter", null, null),
-            TvViews.SECTION_GAP);
-        int anbieterBreite = tvCardWidthDp(230, 180);
-        ArrayList<View> anbieterKarten = new ArrayList<>();
-        for (int i = 0; i < providers.size(); i += 1) {
-            Provider provider = providers.get(i);
-            View karte = TvViews.providerCard(this, provider, providerTagline(provider), anbieterBreite,
-                () -> openProvider(provider, provider.lastUrl.isEmpty() ? provider.startUrl : provider.lastUrl),
-                () -> openProvider(provider, provider.startUrl));
-            karte.setTag("tv:anbieter:" + i);
-            anbieterKarten.add(karte);
-            providerButtons.remove(provider.id);
-        }
-        if (!anbieterKarten.isEmpty()) {
-            reiheAnhaengenTv(page, TvViews.reihe(this, anbieterKarten), TvViews.ITEM_GAP);
+        // Der Anbieterrost steht hier nur noch, wenn er bestellt ist.
+        //
+        // Er war die Reihe, durch die man jedes Mal hindurchblaetterte: drei
+        // Kacheln, die sich nie aendern, mitten zwischen dem, was laeuft, und
+        // dem, was vorgeschlagen wird. Erreichbar sind die Anbieter weiterhin
+        // immer - "Anbieter" in der Kopfzeile fuehrt auf ihre eigene Seite,
+        // und von dort geht es mit einem Druck hinein.
+        if (zeigt(Startseite.ANBIETER)) {
+            addSpacing(page, TvViews.sectionHeader(this, "Deine Anbieter", "Alle anzeigen",
+                this::zeigeAnbieter), TvViews.SECTION_GAP);
+            List<View> anbieterKarten = tvAnbieterKarten();
+            if (!anbieterKarten.isEmpty()) {
+                reiheAnhaengenTv(page, TvViews.reihe(this, anbieterKarten), TvViews.ITEM_GAP);
+            }
         }
         if (zeigt(Startseite.WEITERSCHAUEN)) {
             etwasGezeigt |= tvKachelReihe(page, "watchlist", Bibliothek.WATCHLIST.titel,
@@ -2517,8 +2534,6 @@ public class MainActivity extends Activity {
                 "Öffne einen Anbieter und sieh dir etwas an. ELFIX merkt sich die Folge und die "
                     + "Stelle und schlägt sie dir hier wieder vor."), TvViews.ITEM_GAP);
         }
-
-        tvRueckblicksReihe(page);
 
         if (zeigt(Startseite.PERSOENLICH)) {
             tvVorschlagsReihe(page, Empfehlungen.NEUES, "Neu bei deinen Anbietern", null, null);
@@ -2536,7 +2551,15 @@ public class MainActivity extends Activity {
             tvVorschlagsReihe(page, Empfehlungen.FILM, "Filme für dich", "Mehr anzeigen",
                 () -> zeigeEntdeckung(Empfehlungen.FILM));
         }
-        // Ist alles abgeschaltet, steht sonst nur der Anbieterrost da und die
+        // Der Rueckblick steht zuletzt, und das ist der Platz, der ihm
+        // zusteht. Er sass bisher zwischen Mediathek und Vorschlaegen - im
+        // Dezember auch dann, wenn er abgeschaltet war, denn der
+        // Jahresrueckblick blendet sich von selbst ein. Mitten in der Seite
+        // war das eine Karte, die niemand bestellt hatte und die alles
+        // darunter um eine Bildschirmhoehe nach unten schob. Ganz unten
+        // bleibt sie zu finden und steht nichts im Weg.
+        tvRueckblicksReihe(page);
+        // Ist alles abgeschaltet, steht sonst nichts mehr da und die
         // Seite sieht kaputt aus. Der Weg zurueck gehoert dorthin, wo der
         // Mangel auffaellt - nicht in eine Einstellung, die man erst sucht.
         if (startseite != null && startseite.anzahlAn() == 0) {
@@ -2902,6 +2925,21 @@ public class MainActivity extends Activity {
                 "tv:wp:0:oeffnen", "tv:wp:einstellungen"}) {
                 View ziel = seite.findViewWithTag(erst);
                 if (ziel != null && ziel.isShown() && ziel.isEnabled()) {
+                    ziel.requestFocus();
+                    return;
+                }
+            }
+            // Der letzte Ausweg: das erste Fokusziel der Seite ueberhaupt.
+            //
+            // Die Liste oben nennt bekannte Plaetze, und eine Seite kann
+            // keinen davon tragen - eine Startseite ohne Titelbild und ohne
+            // Anbieterreihe faengt mit "Weiterschauen" an, und diese Marke
+            // steht dort nicht. Ohne diesen Ausweg stand der Fokus dann
+            // nirgends, und der erste Druck auf der Fernbedienung tat nichts.
+            ArrayList<View> ziele = new ArrayList<>();
+            seite.addFocusables(ziele, View.FOCUS_DOWN, View.FOCUSABLES_ALL);
+            for (View ziel : ziele) {
+                if (ziel.isShown() && ziel.isEnabled()) {
                     ziel.requestFocus();
                     return;
                 }
@@ -4201,12 +4239,11 @@ public class MainActivity extends Activity {
 
         // Was schon laeuft, steht oben - dieselbe Reihenfolge wie am Rechner:
         // Neue Folgen, Weiterschauen, Gemeinsam weiterschauen, YouTube. Der
-        // Anbieterrost stand hier bisher davor, weil es auf dem Telefon keine
-        // Seitenleiste gibt und die Anbieter der Weg zu allem sind. Das stimmt
-        // weiterhin - nur gehoert er nicht *vor* das, was man gerade schaut:
-        // wer weiterschauen will, sollte dafuer nicht an drei Reihen
-        // vorbeiblaettern muessen. Leere Reihen fallen ohnehin weg statt als
-        // leerer Kasten dazustehen.
+        // Anbieterrost stand hier bisher dahinter, weil es auf dem Telefon
+        // keine Seitenleiste gibt und die Anbieter der Weg zu allem sind.
+        // Dieser Weg steht jetzt oben rechts in der Kopfzeile; die Reihe hier
+        // ist freiwillig. Leere Reihen fallen ohnehin weg statt als leerer
+        // Kasten dazustehen.
         boolean etwasGezeigt = neueFolgenReihe(page);
         eigeneGeraeteLiveKarteAnhaengen(page, false, MobileViews.SECTION_GAP);
         List<Favorite> privat = new ArrayList<>();
@@ -4231,8 +4268,14 @@ public class MainActivity extends Activity {
                 Bibliothek.WEITERSCHAUEN, 8);
         }
 
-        addSpacing(page, MobileViews.sectionHeader(this, "Deine Anbieter", null, null), MobileViews.SECTION_GAP);
-        addSpacing(page, providerGrid(), MobileViews.ITEM_GAP);
+        // Der Anbieterrost steht hier nur noch, wenn er bestellt ist - er hat
+        // seine eigene Seite bekommen (der Knopf oben rechts). Begruendung
+        // steht bei Startseite.ANBIETER.
+        if (zeigt(Startseite.ANBIETER)) {
+            addSpacing(page, MobileViews.sectionHeader(this, "Deine Anbieter", "Alle anzeigen",
+                this::zeigeAnbieter), MobileViews.SECTION_GAP);
+            addSpacing(page, providerGrid(), MobileViews.ITEM_GAP);
+        }
         kalenderReihe(page);
 
         if (zeigt(Startseite.WEITERSCHAUEN)) {
@@ -4248,8 +4291,6 @@ public class MainActivity extends Activity {
                 "Öffne einen Anbieter und sieh dir etwas an. ELFIX merkt sich die Folge und "
                     + "die Stelle und schlägt sie dir hier wieder vor.", null, null), MobileViews.ITEM_GAP);
         }
-
-        rueckblicksReihe(page);
 
         if (zeigt(Startseite.PERSOENLICH)) {
             vorschlagsReihe(page, Empfehlungen.NEUES, "Neu bei deinen Anbietern", null, null);
@@ -4267,6 +4308,10 @@ public class MainActivity extends Activity {
             vorschlagsReihe(page, Empfehlungen.FILM, "Filme für dich", "Mehr anzeigen",
                 () -> zeigeEntdeckung(Empfehlungen.FILM));
         }
+        // Zuletzt der Rueckblick - aus demselben Grund wie am Fernseher: er
+        // sass zwischen Mediathek und Vorschlaegen und schob im Dezember
+        // alles darunter nach unten, auch wenn ihn niemand bestellt hatte.
+        rueckblicksReihe(page);
         // Ist alles abgeschaltet, steht sonst nur die Suche da und die Seite
         // sieht kaputt aus. Der Weg zurueck gehoert dorthin, wo der Mangel
         // auffaellt - nicht in eine Einstellung, die man erst suchen muss.
@@ -6243,8 +6288,19 @@ public class MainActivity extends Activity {
                         karte.setTag("tv:entdeckung:" + stelle);
                         final int zielStelle = stelle;
                         karte.setOnKeyListener((view, code, ereignis) -> {
-                            if (ereignis.getAction() != KeyEvent.ACTION_DOWN
-                                || (code != KeyEvent.KEYCODE_DPAD_DOWN && code != KeyEvent.KEYCODE_DPAD_UP)) {
+                            if (ereignis.getAction() != KeyEvent.ACTION_DOWN) return false;
+                            // Links und rechts bleiben in der Zeile - dasselbe
+                            // wie in den Reihen der Startseite. Ohne das sprang
+                            // der Fokus vom Ende einer Zeile an den Anfang der
+                            // naechsten, und wer nur blaettern wollte, war
+                            // ploetzlich eine Zeile weiter.
+                            if (code == KeyEvent.KEYCODE_DPAD_LEFT
+                                || code == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                                return Reihenfokus.amRand(zielStelle, spalten,
+                                    zustand.eintraege.size(),
+                                    code == KeyEvent.KEYCODE_DPAD_RIGHT);
+                            }
+                            if (code != KeyEvent.KEYCODE_DPAD_DOWN && code != KeyEvent.KEYCODE_DPAD_UP) {
                                 return false;
                             }
                             int ziel = zielStelle + (code == KeyEvent.KEYCODE_DPAD_DOWN ? spalten : -spalten);
@@ -6465,6 +6521,98 @@ public class MainActivity extends Activity {
             grid.addView(row, rowParams);
         }
         return grid;
+    }
+
+    /**
+     * Die Anbieterkacheln des Fernsehers.
+     *
+     * <p>Eine Stelle fuer zwei Orte: die Startseite, wenn die Reihe dort
+     * bestellt ist, und die Anbieterseite. Zwei Wege hinein, wie bisher - ein
+     * Druck fuehrt dorthin, wo man den Anbieter verlassen hat, ein langer auf
+     * seine Startseite.
+     */
+    private List<View> tvAnbieterKarten() {
+        int breite = tvCardWidthDp(230, 180);
+        ArrayList<View> karten = new ArrayList<>();
+        for (int i = 0; i < providers.size(); i += 1) {
+            Provider provider = providers.get(i);
+            View karte = TvViews.providerCard(this, provider, providerTagline(provider), breite,
+                () -> openProvider(provider, provider.lastUrl.isEmpty() ? provider.startUrl : provider.lastUrl),
+                () -> openProvider(provider, provider.startUrl));
+            karte.setTag("tv:anbieter:" + i);
+            karten.add(karte);
+            // Die Kachel ist ab jetzt das Ziel fuer diesen Anbieter; der
+            // Knopf der (nicht gezeichneten) Leiste darf den Fokus nicht
+            // mehr auf sich ziehen.
+            providerButtons.remove(provider.id);
+        }
+        return karten;
+    }
+
+    /**
+     * Die Anbieterseite.
+     *
+     * <p>Sie ist neu, und sie ist die Gegenleistung dafuer, dass der
+     * Anbieterrost von der Startseite verschwunden ist. Dort waren es drei
+     * Kacheln, die sich nie aendern, mitten zwischen dem, was laeuft, und dem,
+     * was vorgeschlagen wird - gemeldet als genau das: eine Reihe, durch die
+     * man jedes Mal hindurchblaettert. Hier stehen sie, wenn man sie sucht.
+     *
+     * <p>Der Weg hierher ist auf beiden Geraeten einer, den es vorher nicht
+     * gab: am Fernseher der Knopf "Anbieter" in der Kopfzeile, auf dem Telefon
+     * der daneben oben rechts. Beide stehen auf jeder eigenen Seite - anders
+     * als der Rost, den es nur auf der Startseite gab.
+     */
+    void zeigeAnbieter() {
+        currentScreen = "anbieter";
+        abschnitteFuer("anbieter");
+        mouseMode = false;
+        setMouseCursorVisible(false);
+        setChromeCollapsed(false, false);
+        content.removeAllViews();
+        updateBottomNav();
+        if (isTelevision()) renderTvAnbieter();
+        else renderMobileAnbieter();
+    }
+
+    private void renderTvAnbieter() {
+        LinearLayout page = tvPage();
+        page.addView(TvViews.eyebrow(this, "ELFIX"));
+        page.addView(TvViews.heroTitle(this, "Deine Anbieter"));
+        List<View> karten = tvAnbieterKarten();
+        if (karten.isEmpty()) {
+            addSpacing(page, TvViews.emptyState(this, R.drawable.ic_nav_anbieter,
+                "Noch kein Anbieter",
+                "Unter Einstellungen kommt einer dazu. Ohne Anbieter gibt es nichts zu holen - "
+                    + "weder Vorschläge noch Folgen."), TvViews.SECTION_GAP);
+        } else {
+            reiheAnhaengenTv(page, TvViews.reihe(this, karten), TvViews.SECTION_GAP);
+            addSpacing(page, TvViews.hinweis(this,
+                "Ein Druck öffnet den Anbieter dort, wo du ihn verlassen hast. Lange drücken "
+                    + "öffnet seine Startseite. Wenn du die Kacheln lieber gleich auf der "
+                    + "Startseite hast: Einstellungen > Startseite > Deine Anbieter.",
+                "Einstellungen", this::showSettings), TvViews.SECTION_GAP);
+        }
+        tvFokusHerstellen(page);
+    }
+
+    private void renderMobileAnbieter() {
+        LinearLayout page = mobilePage();
+        page.addView(MobileViews.eyebrow(this, "ELFIX"));
+        page.addView(MobileViews.heroTitle(this, "Deine Anbieter"));
+        page.addView(MobileViews.subtitle(this,
+            "Tippen öffnet dort, wo du warst. Langes Tippen die Startseite des Anbieters."));
+        if (providers.isEmpty()) {
+            addSpacing(page, MobileViews.emptyState(this, R.drawable.ic_nav_anbieter,
+                "Noch kein Anbieter",
+                "Unter Einstellungen kommt einer dazu. Ohne Anbieter gibt es nichts zu holen - "
+                    + "weder Vorschläge noch Folgen."), 20);
+            return;
+        }
+        addSpacing(page, providerGrid(), MobileViews.SECTION_GAP);
+        addSpacing(page, MobileViews.hinweis(this,
+            "Lieber gleich auf der Startseite? Einstellungen > Startseite > Deine Anbieter.",
+            "Einstellungen", this::showSettings), MobileViews.SECTION_GAP);
     }
 
     private String providerTagline(Provider provider) {
@@ -6750,14 +6898,16 @@ public class MainActivity extends Activity {
     /**
      * Welche Reihen die Startseite zeigt.
      *
-     * <p>Am Rechner steht dasselbe unter {@code settings.home}: sechs Schalter,
-     * die je eine Reihe ein- und ausblenden. Auf dem Telefon gab es sie nicht -
+     * <p>Am Rechner steht dasselbe unter {@code settings.home}: ein Schalter je
+     * Reihe, der sie ein- und ausblendet. Auf dem Telefon gab es sie nicht -
      * die Reihen standen fest, und wer die Vorschlaege nicht wollte, hatte
      * keine Wahl. Die Schluessel sind absichtlich dieselben (siehe
      * {@link Startseite}).
      *
-     * <p>Der Kalender kommt dazu: er ist am Rechner eine eigene Seite in der
-     * Seitenleiste, hier eine Reihe - und dann gehoert er in dieselbe Liste.
+     * <p>Zwei kommen dazu, die es am Rechner nicht gibt: der Kalender (dort
+     * eine eigene Seite in der Seitenleiste) und die Anbieter (dort die
+     * Seitenleiste selbst). Beide sind hier Reihen - und dann gehoeren sie in
+     * dieselbe Liste wie die uebrigen.
      */
     private void startseitenEinstellungen(LinearLayout koerper, boolean fernseher) {
         if (startseite == null) return;
@@ -13108,7 +13258,19 @@ public class MainActivity extends Activity {
                 showGlobalSearch(searchInput.getText().toString().trim());
                 return true;
             }
-            if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN && isChromeFocused()) {
+            // Nach unten aus der Kopfzeile heraus. Das Einklappen gehoert
+            // dabei nur zur Anbieterseite: dort kostet die Kopfzeile Bild, und
+            // alles, was sie bietet, hat eine Taste auf der Fernbedienung.
+            //
+            // Auf den eigenen Seiten war es ein gemeldeter Fehler. Wer auf der
+            // Startseite von "Suche" nach unten drueckte, verlor die ganze
+            // Kopfzeile - am Fernseher heisst das: kein Weg mehr zu Suche,
+            // Favoriten, Watchparty und Einstellungen, bis man die Seite neu
+            // aufruft. Eingeklappt wurde sie, weil dahinter ein WebView
+            // vermutet wurde; auf der Startseite gibt es keinen, und so blieb
+            // sie weg, ohne dass etwas an ihre Stelle trat.
+            if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN && isChromeFocused()
+                && "provider".equals(currentScreen)) {
                 setChromeCollapsed(true, false);
                 // Auf dem Weg nach unten liegt die Wiedergabeleiste. Sie zu
                 // ueberspringen hiesse, "Naechste Folge" und Autoplay

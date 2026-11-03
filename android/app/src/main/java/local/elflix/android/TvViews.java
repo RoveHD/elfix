@@ -512,9 +512,13 @@ final class TvViews {
      * und ein Rand von einer halben Kachelbreite stehen - ohne beides endete
      * die fokussierte Kachel genau an der Kante, und der um fuenf Prozent
      * vergroesserte Fokusrahmen waere abgeschnitten.
+     *
+     * <p>Und sie ist eine {@link Fokusreihe}: links und rechts bleiben in der
+     * Reihe, oben und unten halten die Spalte. Jede Reihe der App laeuft hier
+     * durch, deshalb steht die Regel hier und nicht an den Aufrufstellen.
      */
     static HorizontalScrollView reihe(Context context, List<View> karten) {
-        HorizontalScrollView scroll = new HorizontalScrollView(context);
+        Fokusreihe scroll = new Fokusreihe(context);
         scroll.setHorizontalScrollBarEnabled(false);
         scroll.setClipToPadding(false);
         scroll.setClipChildren(false);

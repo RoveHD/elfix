@@ -48,20 +48,40 @@ public class StartseiteTest {
     }
 
     /**
-     * Der Rückblick beginnt aus - genau wie {@code showReview} am Rechner.
+     * Zwei Reihen beginnen aus, und jede hat ihren Grund.
      *
-     * <p>Eine Reihe, die "0 Stunden" zeigt, weil noch nie etwas gemessen wurde,
-     * ist keine Einladung, sondern ein Vorwurf.
+     * <p><b>Der Rückblick</b> - genau wie {@code showReview} am Rechner: eine
+     * Reihe, die "0 Stunden" zeigt, weil noch nie etwas gemessen wurde, ist
+     * keine Einladung, sondern ein Vorwurf.
+     *
+     * <p><b>Die Anbieter</b> - drei Kacheln, die sich nie ändern, standen
+     * mitten in der Startseite und wurden jedes Mal überblättert. Sie haben
+     * ihre eigene Seite bekommen (am Fernseher der Knopf "Anbieter" in der
+     * Kopfzeile, am Telefon der oben rechts); auf der Startseite stehen sie
+     * nur noch auf Wunsch.
      */
     @Test
-    public void nurDerRueckblickBeginntAus() {
+    public void rueckblickUndAnbieterBeginnenAus() {
         for (Startseite.Reihe reihe : Startseite.REIHEN) {
-            if (Startseite.RUECKBLICK.equals(reihe.schluessel)) {
-                assertFalse(reihe.vorgabe);
+            if (Startseite.RUECKBLICK.equals(reihe.schluessel)
+                || Startseite.ANBIETER.equals(reihe.schluessel)) {
+                assertFalse("Diese Reihe sollte aus sein: " + reihe.schluessel, reihe.vorgabe);
             } else {
                 assertTrue("Diese Reihe sollte an sein: " + reihe.schluessel, reihe.vorgabe);
             }
         }
+    }
+
+    /** Die Anbieter sind eine Reihe wie jede andere - abschaltbar und wiederholbar. */
+    @Test
+    public void dieAnbieterStehenInDerListe() {
+        boolean gefunden = false;
+        for (Startseite.Reihe reihe : Startseite.REIHEN) {
+            if (Startseite.ANBIETER.equals(reihe.schluessel)) gefunden = true;
+        }
+        assertTrue(gefunden);
+        assertEquals("showProviders", Startseite.ANBIETER);
+        assertFalse(Startseite.vorgabe(Startseite.ANBIETER));
     }
 
     @Test
