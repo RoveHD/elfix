@@ -3,6 +3,34 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.77 — 6. November 2026
+
+- Fernseher: Am Ende einer Reihe wechselt das Steuerkreuz nicht mehr von selbst
+  die Reihe. Links und rechts bleiben in der Reihe, oben und unten halten die
+  Spalte — wer bei der vierten sichtbaren Kachel nach unten drückt, landet
+  unter ihr und nicht irgendwo in der nächsten Reihe. Dasselbe an den Kanten
+  des Entdeckungsrasters. Hintergrund: Androids Fokussuche nahm die Kachel, die
+  am weitesten rechts liegt, und das war die unsichtbare zwölfte der
+  Nachbarreihe — deshalb sah der Sprung zufällig aus.
+- Fernseher: Die Kopfzeile verschwindet nicht mehr, wenn man auf einer eigenen
+  Seite nach unten drückt. Bisher waren Suche, Favoriten, Watchparty und
+  Einstellungen danach bis zum nächsten Seitenaufbau nicht erreichbar.
+  Eingeklappt wird sie nur noch auf einer Anbieterseite, wo sie Bild kostet.
+- Handy und Fernseher: Die Anbieter haben eine eigene Seite — am Fernseher der
+  Knopf „Anbieter" in der Kopfzeile, am Telefon der oben rechts. Auf der
+  Startseite stehen die Anbieterkacheln nur noch auf Wunsch
+  (Einstellungen → Startseite → Deine Anbieter, standardmäßig aus).
+- Handy und Fernseher: „Dein Rückblick" steht jetzt am Ende der Startseite
+  statt zwischen Mediathek und Vorschlägen. Der Jahresrückblick blendet sich im
+  Dezember weiter von selbst ein, schiebt dabei aber nicht mehr alles andere
+  nach unten.
+- Handy und Fernseher: Alle Karten einer Reihe sind gleich hoch. Vorher
+  bestimmte die Länge des Titels die Höhe jeder einzelnen Karte, und die Reihe
+  hatte eine ausgefranste Unterkante. Die Reihe ist jetzt so hoch, wie ihre
+  höchste Karte sein muss — keine feste Höhe, also kein zusätzlicher Leerraum.
+- Neu: [docs/STEUERKREUZ.md](docs/STEUERKREUZ.md) beschreibt, nach welchen
+  Regeln der Fokus am Fernseher wandert.
+
 ## 2.0.76 — 23. Oktober 2026
 
 - Intro-Daten bei aufgeteilten Anime-Staffeln: Black Clover wird anhand der
