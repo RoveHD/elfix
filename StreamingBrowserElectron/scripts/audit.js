@@ -15,7 +15,25 @@ const AUSNAHMEN = {
   // Formatstring. 1.1.3 ist die neueste Fassung, eine reparierte gibt es nicht.
   // Die Formatstrings stammen hier nur aus festem Code (AdGuard-Regelparser,
   // argparse, roarr beim Electron-Download), nie aus fremden Eingaben.
-  "GHSA-hp3w-g68c-fv3c": { bis: "2026-12-31", paket: "sprintf-js" }
+  "GHSA-hp3w-g68c-fv3c": { bis: "2026-12-31", paket: "sprintf-js" },
+  // zod < 4.6.6: Speichererschoepfung beim Pruefen uebergrosser Zeichenketten
+  // mit Laengenbegrenzung. Eine reparierte Fassung gibt es, sie ist hier aber
+  // nicht zu erreichen: @adguard/tsurlfilter nagelt zod fest, auch in seiner
+  // neuesten Fassung (6.0.4 verlangt genau 3.24.4). Was npm als "fix"
+  // vorschlaegt, ist ein Ruecksprung auf tsurlfilter 1.0.81 - fuenf
+  // Hauptfassungen zurueck, also keine Reparatur, sondern ein anderer
+  // Adblocker. Der Weg dorthin fuehrt durch den Regelparser (agtree) und damit
+  // ueber die Filterlisten der eingestellten Quellen; getroffen wuerde der
+  // eigene Speicher beim Einlesen einer absichtlich entarteten Liste.
+  "GHSA-mrhx-c7xc-m3w5": { bis: "2027-03-31", paket: "zod" },
+  // minimatch >= 7 < 11.0.1: Dienstverweigerung ueber aufgeblaehte Glob-Teile.
+  // Auch hier existiert eine reparierte Fassung (11.0.1), und auch hier nimmt
+  // sie niemand: app-builder-lib verlangt bis heute ^10.2.5 und
+  // @electron/universal ^9.0.3 - in electron-builder 26.18.0 ebenso wie in der
+  // hier verwendeten. minimatch laeuft in dieser Kette nur beim Bauen, ueber
+  // die Dateimuster unserer eigenen Konfiguration; zur Laufzeit ist es nicht
+  // dabei.
+  "GHSA-g3hv-75wg-m249": { bis: "2027-03-31", paket: "minimatch" }
 };
 
 function bericht() {

@@ -30,6 +30,11 @@ Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
   höchste Karte sein muss — keine feste Höhe, also kein zusätzlicher Leerraum.
 - Neu: [docs/STEUERKREUZ.md](docs/STEUERKREUZ.md) beschreibt, nach welchen
   Regeln der Fokus am Fernseher wandert.
+- Electron 44.10.2 (behebt GHSA-jr5w-w6x2-84p9), dazu aktualisierte
+  Bauwerkzeuge (undici, fast-uri). Für zwei Meldungen ohne reparierte Fassung
+  stromaufwärts — zod über den AdGuard-Regelparser, minimatch in der
+  electron-builder-Kette — steht eine begründete, bis März 2027 befristete
+  Ausnahme in `scripts/audit.js`.
 
 ## 2.0.76 — 23. Oktober 2026
 
