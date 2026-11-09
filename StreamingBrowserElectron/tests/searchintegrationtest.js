@@ -61,6 +61,11 @@ async function startServer() {
       // Die Uebersetzung fremdsprachiger Titel haengt am Metadaten-Tor des
       // Relays; hier geht es um den Weg durch Ajax, HTML und Varianten.
       fremdtitelSuchen: async () => [],
+      // Das echte Modul und kein Platzhalter: die Suche entscheidet mit
+      // derselben Beweisregel wie der Player, ob eine Antwort eine Sperre ist
+      // (Cloudflare, DDoS-Guard). Eine Attrappe hier wuerde genau die Frage
+      // wegstubben, an der die Suche zuletzt vorbeigelaufen ist.
+      cfSession: require("../src/cf-session"),
       providerModel: { buildSearchUrl: (provider, query) => `${provider.startUrl}/search?q=${encodeURIComponent(query)}` },
       enabledProviders: () => [],
       searchQueryVariants: query => [query, `${query}-alias`],
