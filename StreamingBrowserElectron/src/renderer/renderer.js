@@ -2913,15 +2913,7 @@ function providerCard(provider, large) {
     <span class="provider-name">${escapeHtml(provider.name)}</span>
   `;
   let clickTimer = null;
-  const openProviderTab = async (startUrl = false) => {
-    hideContentViews();
-    const state = startUrl
-      ? await api.openProviderUrl(provider.id, provider.startUrl)
-      : await api.openProvider(provider.id);
-    activeProviderId = state?.activeProviderId || provider.id;
-    setCurrentRoute(`provider:${activeProviderId}`);
-    renderProviders();
-  };
+  const openProviderTab = (startUrl = false) => anbieterOeffnen(provider, startUrl);
   card.addEventListener("click", () => {
     if (clickTimer) clearTimeout(clickTimer);
     clickTimer = setTimeout(() => {
@@ -2947,13 +2939,33 @@ function providerCard(provider, large) {
   return card;
 }
 
+/**
+ * Einen Anbieter oeffnen - der eine Weg fuer alle, die dorthin fuehren.
+ *
+ * <p>Der Klick auf die Kachel, der Doppelklick (auf die Startseite statt
+ * dorthin, wo man war) und der Eintrag im Rechtsklickmenue. Vorher steckte
+ * das im Klick-Handler der Kachel und war von dort aus nicht erreichbar;
+ * das Menue haette es nachbauen muessen, und nachgebaut heisst
+ * auseinanderlaufen.
+ */
+async function anbieterOeffnen(provider, startUrl = false) {
+  hideContentViews();
+  const state = startUrl
+    ? await api.openProviderUrl(provider.id, provider.startUrl)
+    : await api.openProvider(provider.id);
+  activeProviderId = state?.activeProviderId || provider.id;
+  setCurrentRoute(`provider:${activeProviderId}`);
+  renderProviders();
+}
+
 // Was der Rechtsklick anbietet. Die Auswahl faellt im Hauptprozess, weil ein
 // Menue aus HTML hinter der Anbieterseite verschwaende.
 async function anbieterMenue(provider, karte) {
   const anker = karte?.getBoundingClientRect();
   const punkt = anker ? { x: anker.left, y: anker.bottom + 4 } : null;
   const wahl = await api.providerContextMenu?.(provider.name, punkt).catch(() => "");
-  if (wahl === "cloudflare") await anbieterCloudflare(provider);
+  if (wahl === "open") await anbieterOeffnen(provider);
+  else if (wahl === "cloudflare") await anbieterCloudflare(provider);
   else if (wahl === "edit") await anbieterBearbeiten(provider);
   else if (wahl === "new") await anbieterHinzufuegen();
 }

@@ -78,7 +78,8 @@ const ANBIETER = [
 ];
 
 function buehne(antwort, cloudflare = "bestaetigt", route = "search") {
-  const gerufen = { menue: [], settings: [], tabs: [], gebaut: [], toasts: [], cloudflare: [], suchen: [] };
+  const gerufen = { menue: [], settings: [], tabs: [], gebaut: [], toasts: [], cloudflare: [], suchen: [],
+    geoeffnet: [] };
   const providerNameFeld = element("input");
 
   const kontext = {
@@ -93,7 +94,9 @@ function buehne(antwort, cloudflare = "bestaetigt", route = "search") {
         gerufen.menue.push({ name, punkt });
         return antwort;
       },
-      providerCloudflare: async (id) => { gerufen.cloudflare.push(id); return cloudflare; }
+      providerCloudflare: async (id) => { gerufen.cloudflare.push(id); return cloudflare; },
+      openProvider: async (id) => { gerufen.geoeffnet.push(id); return { activeProviderId: id }; },
+      openProviderUrl: async (id, url) => { gerufen.geoeffnet.push(`${id}@${url}`); return { activeProviderId: id }; }
     },
     currentRoute: route,
     activeSearchQuery: "Avatar - Die sieben Häfen",
@@ -117,7 +120,11 @@ function buehne(antwort, cloudflare = "bestaetigt", route = "search") {
     set: (ziel, name, wert) => { ziel[name] = wert; return true; }
   });
   vm.createContext(sandkasten);
+  // anbieterOeffnen gehoert hier hinein, seit Kachelklick und Menueeintrag
+  // denselben Weg nehmen. Ohne den Eintrag macht der Proxy unten still eine
+  // leere Attrappe daraus - die Pruefung liefe durch und pruefte nichts.
   for (const name of ["function providerCard(", "async function anbieterMenue(",
+    "async function anbieterOeffnen(",
     "async function anbieterBearbeiten(", "async function anbieterHinzufuegen(",
     "async function anbieterCloudflare("]) {
     vm.runInContext(abschnitt(RENDERER, name), sandkasten);
@@ -181,6 +188,19 @@ function buehne(antwort, cloudflare = "bestaetigt", route = "search") {
     g.gerufen.settings.length === 0 && g.gerufen.toasts.length === 1,
     "sonst stuende die Auswahl auf -1 und man legte versehentlich einen neuen an");
 
+  // --- Anbieter oeffnen ---
+  // Gewuenscht, weil das Menue bis hierher alles anbot ausser dem, was man am
+  // oeftesten will. Der Klick auf die Kachel tut dasselbe - nur steht der
+  // nicht zur Verfuegung, wenn das Menue schon offen ist.
+  const o = buehne("open");
+  await (await o.karte(1)).ausloesen("contextmenu");
+  pruefe("\"Anbieter öffnen\" oeffnet genau diesen Anbieter",
+    JSON.stringify(o.gerufen.geoeffnet) === '["sto"]', JSON.stringify(o.gerufen.geoeffnet));
+  pruefe("und zwar dort, wo man war - nicht auf der Startseite des Anbieters",
+    !o.gerufen.geoeffnet.some((eintrag) => String(eintrag).includes("@")));
+  pruefe("Es oeffnet dabei keine Einstellungen und bestaetigt nichts",
+    o.gerufen.settings.length === 0 && o.gerufen.cloudflare.length === 0);
+
   // --- Cloudflare bestaetigen ---
   const c = buehne("cloudflare");
   await (await c.karte(1)).ausloesen("contextmenu");
@@ -239,6 +259,9 @@ function buehne(antwort, cloudflare = "bestaetigt", route = "search") {
   // dahinter bleibt "cloudflare" - sie steht auf keinem Schirm.
   pruefe("und Anbieter bestaetigen",
     /label: "Anbieter bestätigen", click: \(\) => \{ gewaehlt = "cloudflare"; \}/.test(handler.slice(0, 1600)));
+  pruefe("Oeffnen steht als erster Eintrag darueber",
+    /label: "Anbieter öffnen", click: \(\) => \{ gewaehlt = "open"; \}/.test(handler.slice(0, 1600))
+    && handler.indexOf('"Anbieter öffnen"') < handler.indexOf('"Anbieter bestätigen"'));
   const cfHandler = MAIN.slice(MAIN.indexOf('ipcMain.handle("provider:cloudflare"'), MAIN.indexOf('ipcMain.handle("provider:save-all"'));
   pruefe("Der manuelle Aufruf oeffnet die Anbieterseite ohne unsichtbare Vorab-Suche",
     /anbieterSeitenAdresse\(provider\)/.test(cfHandler)

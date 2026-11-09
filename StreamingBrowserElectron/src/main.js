@@ -2069,6 +2069,11 @@ ipcMain.handle("provider:context-menu", async (_event, name, punkt) => {
     const menue = Menu.buildFromTemplate([
       { label: titel || "Anbieter", enabled: false },
       { type: "separator" },
+      // Oeffnen steht zuerst, weil es das ist, was man am oeftesten will.
+      // Der einfache Klick auf die Kachel tut dasselbe - nur findet ihn
+      // nicht jeder, wenn das Menue schon offen ist.
+      { label: "Anbieter öffnen", click: () => { gewaehlt = "open"; } },
+      { type: "separator" },
       // Der Eintrag heisst nicht mehr nach einem Dienst: vor denselben
       // Anbietern sitzt mal Cloudflare, mal DDoS-Guard, und der Handgriff ist
       // derselbe. Das Kennwort dahinter bleibt "cloudflare" - es ist eine
