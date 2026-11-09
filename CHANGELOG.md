@@ -3,6 +3,27 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.78 — 9. November 2026
+
+- AniWorld hinter DDoS-Guard funktioniert wieder. Gemeldet war dreierlei auf
+  einmal — die Seite lädt nicht, die Suche findet nichts, der eigene Player
+  findet keine Quelle —, und es war ein Fehler: ELFIX kannte nur
+  Cloudflare-Sperren und hielt die Warteseite von DDoS-Guard für die echte
+  Seite. Eine Trefferliste ohne Treffer, eine Folgenseite ohne Folgen, und
+  nirgends der Hinweis, dass jemand eine Bestätigung will.
+- Erkannt wird sie jetzt auf allen drei Geräten: Suche, Folgenliste und
+  Quellensuche sagen „Bestätigung erforderlich" statt „nichts gefunden", die
+  Seite wird dafür sichtbar geöffnet, und nach deiner Freigabe läuft der
+  abgebrochene Abruf von selbst weiter.
+- Die Suche hatte dafür eine zweite, eigene Erkennung — deshalb fiel die
+  Sperre dem Player auf und ihr nicht. Sie benutzt jetzt dieselbe Regel wie
+  alles andere.
+- Im Protokoll steht, welcher Dienst gesperrt hat; vorher stand dort immer
+  „Cloudflare". Meldung und Menüeintrag heißen entsprechend „Anbieter
+  bestätigen".
+- Unverändert: ELFIX löst keine Abfrage selbst. Es erkennt sie, zeigt sie und
+  wartet auf die echte Freigabe durch dich.
+
 ## 2.0.77 — 6. November 2026
 
 - Fernseher: Am Ende einer Reihe wechselt das Steuerkreuz nicht mehr von selbst
