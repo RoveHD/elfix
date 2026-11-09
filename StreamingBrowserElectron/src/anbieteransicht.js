@@ -158,6 +158,15 @@ function erstellen({ WebContentsView, eltern, sitzung, grenzen, zustandScript, m
           anzeigen("dialog");
         } else anzeigen("laden");
         anordnen();
+      } else if (masse?.ganzseitig) {
+        // Eine Sperre ohne Kasten: die ganze Seite ist die Abfrage (DDoS-Guard
+        // immer, Cloudflare in seiner vollflaechigen Fassung). Es gibt nichts
+        // auszuschneiden, also wird die Seite selbst zum Dialog. Ohne diesen
+        // Zweig landete sie unten bei "warten" - und dort blieb sie, denn auf
+        // eine Bestaetigung, die niemand sieht, wartet man vergebens.
+        ausschnitt = null;
+        anzeigen("dialog");
+        anordnen();
       } else {
         ausschnitt = null;
         anzeigen(weiterAm ? "laden" : "warten");

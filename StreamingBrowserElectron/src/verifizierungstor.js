@@ -199,6 +199,29 @@ function dialogMaskeScript(klickKennung = "", phase = "warten") {
     }
     if (!kasten) {
       globalThis.__elfixAnbieterDialog = null;
+      // Manche Sperren haben gar keinen Kasten: die ganze Seite ist die
+      // Abfrage. Cloudflare macht das in seiner vollflaechigen Fassung,
+      // DDoS-Guard immer - und genau daran blieb die Bestaetigung haengen.
+      // Oben wird eine Abdeckung ueber die Seite gelegt und danach ein Loch
+      // fuer den Kasten hineingeschnitten; ohne Kasten blieb die Abdeckung
+      // ganz liegen. Zu sehen war "Bestaetigung wird vorbereitet ..." mit
+      // einem Balken, der nie endet, denn es kam auch nichts mehr nach.
+      //
+      // Hier deckt ELFIX deshalb auf statt zu. Die Seite ist dann die
+      // Bestaetigung, so wie der Mensch sie im Browser auch saehe.
+      const titelText = String(document.title || '');
+      const warteTitel = /just a moment|attention required|checking your browser|verify you are human|einen augenblick|sicherheitsabfrage|ddos[-\\s]?guard/i.test(titelText);
+      const pruefSkript = !!document.querySelector('script[src*="/cdn-cgi/challenge-platform/"],script[src*="/.well-known/ddos-guard/"]');
+      // Dieselbe Vorsicht wie in der Antwortpruefung: hinter dem Dienst liegt
+      // der ganze Anbieter, sein Pruefskript steht auch auf der richtigen
+      // Folgenseite. Erst wenn ausserdem nichts Gewoehnliches dasteht, ist es
+      // eine Sperre und keine Seite.
+      const echterInhalt = !!document.querySelector('video,source,iframe[src],[class*="player"],[class*="hoster"],a[href*="/episode-"],a[href*="/folge-"],a[href*="/serie"],a[href*="/anime"]');
+      if ((warteTitel || pruefSkript) && !echterInhalt) {
+        abdeckung.removeAttribute('data-elfix-ladephase');
+        abdeckung.replaceChildren();
+        return { bereit: true, ganzseitig: true, viewportWidth: innerWidth, viewportHeight: innerHeight };
+      }
       ladeanzeige();
       return { bereit: true };
     }

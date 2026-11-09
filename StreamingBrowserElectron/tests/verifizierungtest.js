@@ -5,11 +5,29 @@ const path = require("path");
 const vm = require("vm");
 const tor = require("../src/verifizierungstor");
 
-for (const script of [tor.torScript(), tor.zustandScript(), tor.fensterScript(), tor.fensterScript(false)]) {
+const maske = tor.dialogMaskeScript("elfix-klick", "warten");
+for (const script of [tor.torScript(), tor.zustandScript(), tor.fensterScript(), tor.fensterScript(false), maske]) {
   assert.doesNotThrow(() => new Function(script));
 }
 assert.doesNotMatch(tor.torScript(), /\.click\s*\(|requestSubmit\s*\(|\.submit\s*\(/,
   "Verifizierung darf weder klicken noch Formulare absenden");
+assert.doesNotMatch(maske, /\.click\s*\(|requestSubmit\s*\(|\.submit\s*\(/,
+  "Auch die Maske klickt nicht - sie deckt nur ab und wieder auf");
+
+// Eine Sperre ohne Kasten: die ganze Seite ist die Abfrage.
+//
+// Gemeldet als "Bestaetigung wird vorbereitet ..." mit einem Balken, der nie
+// endet. Die Maske legt eine Abdeckung ueber die Seite und schneidet dann ein
+// Loch fuer den Dialog hinein; DDoS-Guard hat keinen Dialog, also blieb die
+// Abdeckung ganz liegen und niemand sah je die Abfrage, die er haette
+// bestaetigen sollen. Jetzt deckt sie in diesem Fall auf und meldet es.
+assert.match(maske, /ganzseitig/, "Die Maske muss die vollflaechige Sperre kennen");
+assert.match(maske, /well-known\/ddos-guard/, "DDoS-Guard gehoert zu den Merkmalen");
+assert.match(maske, /cdn-cgi\/challenge-platform/, "Cloudflares vollflaechige Fassung ebenso");
+// Und die Vorsicht dazu: hinter dem Dienst liegt der ganze Anbieter, sein
+// Pruefskript steht auch auf der richtigen Folgenseite. Ohne diese Bedingung
+// waere jede Seite eine Sperre.
+assert.match(maske, /echterInhalt/, "Ohne Inhaltspruefung waere jede Seite eine Sperre");
 
 const main = fs.readFileSync(path.join(__dirname, "../src/main.js"), "utf8").replace(/\r\n/g, "\n");
 function funktion(name) {
