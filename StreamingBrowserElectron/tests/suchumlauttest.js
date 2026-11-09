@@ -24,12 +24,16 @@ function abschnitt(anfang) {
   return zeilen.slice(von, bis + 1).join("\n");
 }
 
-const umgebung = { String, RegExp, Array, Set, URL, Number, decodeURIComponent };
+// cfSession gehoert dazu, seit die Suche dieselbe Beweisregel benutzt wie der
+// Player: eine zweite, eigene Erkennung war genau der Grund, warum DDoS-Guard
+// vor AniWorld dem Player auffiel und der Suche nicht.
+const umgebung = { String, RegExp, Array, Set, URL, Number, decodeURIComponent,
+  cfSession: require("../src/cf-session") };
 vm.createContext(umgebung);
 for (const name of ["matchesQuery", "umlautFalten", "searchablePathText", "normalizeSearchText",
   "stripSearchAccents", "decodeURIComponentSafe", "contentPathLooksPlayable", "queryTokens",
   "searchQueryVariants", "addSimilarTitleVariants", "addKnownTitleVariants", "singularSearchToken",
-  "isKnownContentPath", "istCloudflareAbfrage"]) {
+  "isKnownContentPath", "istAnbieterAbfrage"]) {
   vm.runInContext(abschnitt(`function ${name}(`), umgebung);
 }
 const r = (code) => vm.runInContext(code, umgebung);
@@ -56,13 +60,25 @@ pruefe("Faltung gilt fuer beide Seiten: Schuessel/Schüssel",
 const antwort = (status, kopf = {}) => ({ status, headers: { get: (n) => kopf[n.toLowerCase()] || "" } });
 umgebung.antwort = antwort;
 pruefe("Cloudflare-Abfrage wird erkannt (403 + Abfrageseite)",
-  r("istCloudflareAbfrage(antwort(403), '<title>Just a moment...</title><script src=\"/cdn-cgi/challenge-platform/x\"></script>')"));
+  r("istAnbieterAbfrage(antwort(403), '<title>Just a moment...</title><script src=\"/cdn-cgi/challenge-platform/x\"></script>')"));
 pruefe("cf-mitigated: challenge reicht",
-  r("istCloudflareAbfrage(antwort(200, { 'cf-mitigated': 'challenge' }), '')"));
+  r("istAnbieterAbfrage(antwort(200, { 'cf-mitigated': 'challenge' }), '')"));
 pruefe("Normale Trefferseite ist keine Abfrage",
-  !r("istCloudflareAbfrage(antwort(200), '<a href=\"/serie/x\">X</a>')"));
+  !r("istAnbieterAbfrage(antwort(200), '<a href=\"/serie/x\">X</a>')"));
 pruefe("Ein schlichtes 404 ist keine Abfrage",
-  !r("istCloudflareAbfrage(antwort(404), 'not found')"));
+  !r("istAnbieterAbfrage(antwort(404), 'not found')"));
+// Und der gemeldete Fall: AniWorld hat DDoS-Guard davorgesetzt. Die Suche
+// bekam dessen Warteseite, fand darin keine Treffer und meldete "nichts
+// gefunden" - der Anbieter sah kaputt aus, dabei fehlte nur die Bestaetigung.
+pruefe("DDoS-Guards Warteseite wird erkannt",
+  r("istAnbieterAbfrage(antwort(403, { server: 'ddos-guard' }), "
+    + "'<html><title>DDoS-Guard</title><script src=\"/.well-known/ddos-guard/check\"></script></html>')"));
+// Die Gegenprobe wiegt hier am schwersten: hinter DDoS-Guard liegt der ganze
+// Anbieter, seine richtige Trefferseite traegt dieselben Merkmale.
+pruefe("Die echte Trefferseite dahinter ist keine Abfrage",
+  !r("istAnbieterAbfrage(antwort(200, { server: 'ddos-guard' }), "
+    + "'<html><title>Suche</title><script src=\"/.well-known/ddos-guard/check\"></script>"
+    + "<a href=\"/serie/x\">X</a></html>')"));
 
 const quellAbruf = abschnitt("function anbieterAbruf(");
 pruefe("Die Suche nutzt die Sitzung der Anbieteransichten mit Cookies",

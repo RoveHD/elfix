@@ -139,7 +139,7 @@ app.whenReady().then(async () => {
       await player.webContents.executeJavaScript(`window.freigegebeneQuelle=${JSON.stringify(ergebnis.quelle.adresse)}`);
       return true;
     }, anbieterAbruf: (url, options) => browserSession.fetch(url, options),
-    istCloudflareAbfrage: () => false, AbortController, AbortSignal, URL, URLSearchParams, Buffer, Date
+    istAnbieterAbfrage: () => false, AbortController, AbortSignal, URL, URLSearchParams, Buffer, Date
   });
   vm.runInContext(["direktAuftragBeginnen", "anbieterQuelleBeobachten", "anbieterSeiteOeffnen", "anbieterHosterWahl", "anbieterFormularToken", "anbieterAnfrageErfassen"].map(funktion).join("\n"), c);
   browserSession.webRequest.onBeforeRequest((details, callback) => {

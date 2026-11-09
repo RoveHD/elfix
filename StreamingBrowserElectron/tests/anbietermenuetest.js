@@ -234,8 +234,11 @@ function buehne(antwort, cloudflare = "bestaetigt", route = "search") {
   pruefe("Es bietet Bearbeiten und Neu an",
     /label: "Bearbeiten", click: \(\) => \{ gewaehlt = "edit"; \}/.test(handler.slice(0, 1200))
     && /label: "Neuer Anbieter", click: \(\) => \{ gewaehlt = "new"; \}/.test(handler.slice(0, 1200)));
-  pruefe("und Cloudflare bestaetigen",
-    /label: "Cloudflare bestätigen", click: \(\) => \{ gewaehlt = "cloudflare"; \}/.test(handler.slice(0, 1200)));
+  // Der Eintrag heisst nach dem Handgriff und nicht nach einem Dienst: vor
+  // denselben Anbietern sitzt mal Cloudflare, mal DDoS-Guard. Die Kennung
+  // dahinter bleibt "cloudflare" - sie steht auf keinem Schirm.
+  pruefe("und Anbieter bestaetigen",
+    /label: "Anbieter bestätigen", click: \(\) => \{ gewaehlt = "cloudflare"; \}/.test(handler.slice(0, 1600)));
   const cfHandler = MAIN.slice(MAIN.indexOf('ipcMain.handle("provider:cloudflare"'), MAIN.indexOf('ipcMain.handle("provider:save-all"'));
   pruefe("Der manuelle Aufruf oeffnet die Anbieterseite ohne unsichtbare Vorab-Suche",
     /anbieterSeitenAdresse\(provider\)/.test(cfHandler)

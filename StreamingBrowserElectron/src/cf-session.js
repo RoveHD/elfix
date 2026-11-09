@@ -21,10 +21,24 @@ function klassifizieren({ status = 0, headers = {}, body = "", expected = "" } =
   const platform = /\/cdn-cgi\/challenge-platform\//i.test(sample);
   const cloudflare = Boolean(header(headers, "cf-ray")) || /cloudflare/i.test(header(headers, "server"));
   // A JSD script, cf-ray, HTTP 403 or HTML on its own is not a challenge.
-  const challenge = header(headers, "cf-mitigated").trim().toLowerCase() === "challenge"
+  const cfChallenge = header(headers, "cf-mitigated").trim().toLowerCase() === "challenge"
     || (html && ((gate && (waiting || platform || widget || status === 403 || status === 503))
       || (waiting && (platform || widget))
       || (widget && cloudflare && [403, 429, 503].includes(Number(status)))));
+  // DDoS-Guard, der zweite Torwaechter vor denselben Anbietern. Dieselbe
+  // Vorsicht wie oben, und sie wiegt hier schwerer: wer hinter dem Dienst
+  // liegt, liegt *vollstaendig* dahinter. Server-Kopf und __ddg-Kekse traegt
+  // damit auch die richtige Folgenseite, und auf manchen Seiten steht sein
+  // Pruefskript in jedem Dokument. Keines dieser drei Merkmale ist fuer sich
+  // ein Tor - erst zusammen mit einer Warteseite oder einer abweisenden
+  // Antwort wird eine Sperre daraus.
+  const ddgSeite = /\/\.well-known\/ddos-guard\//i.test(sample)
+    || /ddos-guard\.net/i.test(sample)
+    || /\bddos[-\s]?guard\b/i.test(title);
+  const ddgChallenge = html && ddgSeite
+    && (waiting || [403, 429, 503].includes(Number(status)));
+  const challenge = cfChallenge || ddgChallenge;
+  const anbieter = cfChallenge ? "cloudflare" : ddgChallenge ? "ddos-guard" : "";
   let type = "Other";
   if (challenge) type = "Challenge";
   else if (html) type = "HTML";
@@ -32,7 +46,8 @@ function klassifizieren({ status = 0, headers = {}, body = "", expected = "" } =
   else if (/dash\+xml/.test(contentType) || /^\s*(?:<\?xml[^>]*>\s*)?<MPD\b/i.test(sample)) type = "DASH";
   else if (/\b(?:video|audio)\/mp4\b/.test(contentType)) type = "MP4";
   else if (/\bjson\b/.test(contentType) || /^\s*[\[{]/.test(sample)) type = "JSON";
-  return { type, challenge, unexpectedHtml: html && /^(?:stream|json|hls|dash|mp4)$/i.test(expected) };
+  return { type, challenge, anbieter,
+    unexpectedHtml: html && /^(?:stream|json|hls|dash|mp4)$/i.test(expected) };
 }
 
 function safeUrl(value) {
@@ -66,7 +81,11 @@ function diagnose(event, details = {}) {
     userAgent: String(details.userAgent || header(requestHeaders, "user-agent")).replace(/[\r\n]/g, "").slice(0, 240),
     referer: safeUrl(details.referer || header(requestHeaders, "referer")),
     origin: safeUrl(details.origin || header(requestHeaders, "origin")),
-    responseType: state.type, unexpectedHtml: state.unexpectedHtml
+    responseType: state.type, unexpectedHtml: state.unexpectedHtml,
+    // Welcher Torwaechter - sonst stuende unter jeder Sperre "Cloudflare",
+    // auch wenn DDoS-Guard davor sitzt, und die Suche nach dem Grund finge
+    // beim falschen Dienst an.
+    anbieter: state.anbieter
   };
   const events = new Set(["challenge detected", "opening verification view", "verification passed",
     "session persisted", "retrying original request", "stream request succeeded", "stream request still challenged",

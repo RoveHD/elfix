@@ -26,6 +26,11 @@ public class VerifizierungTest {
         assertTrue(zustand.contains("just a moment"));
         assertTrue(zustand.contains("challenge-platform"));
         assertTrue(zustand.contains("cf-chl-"));
+        // Vor denselben Anbietern sitzt inzwischen auch DDoS-Guard. Ohne
+        // dessen Merkmale hielt die Ansicht die Warteseite fuer die Folge
+        // selbst und wartete auf eine Bestaetigung, die nie als solche galt.
+        assertTrue(zustand.contains("ddos[-\\s]?guard"));
+        assertTrue(zustand.contains(".well-known/ddos-guard"));
         assertTrue(maske.contains("data-elfix-verifizierung"));
         String alles = zustand + maske;
         assertFalse(alles.contains(".click()"));

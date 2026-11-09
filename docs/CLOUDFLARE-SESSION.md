@@ -50,3 +50,51 @@ Ein nativer HTTP-Stack kann trotz gleicher gueltiger Cookies und gleichem User-A
 - Das Geraet wurde vor dem letzten Gesamtdurchlauf getrennt. Der finale Geraete-Rerun war deshalb nicht moeglich; das ist von den erfolgreichen vorherigen beiden Geraetetests zu unterscheiden.
 
 Die automatischen Tests loesen keine echte Cloudflare-Challenge. Eine reale manuelle Freigabe bei s.to/Hostern, das Verhalten nach einem spaeteren App-Neustart sowie alle WebView-/Provider-Versionen sind damit nicht vollstaendig abgedeckt. Provider, deren eigene Challenge nach der Bestaetigung noch eine separate Formaktion verlangt, muessen live geprueft werden: ELFIX betaetigt keine CAPTCHA-/Weiter-Elemente automatisch. Es wartet auf die native Freigabe der Seite; ein Token allein wird nicht als Erfolg ausgegeben.
+
+## Der zweite Torwaechter: DDoS-Guard
+
+Dieses Dokument hiess nach Cloudflare, weil es lange nur einen gab. Vor
+denselben Anbietern sitzt inzwischen auch **DDoS-Guard** — gemeldet für
+AniWorld, und mit drei Symptomen auf einmal: die Seite lud nicht, die Suche
+fand nichts, und der eigene Player fand keine Quelle.
+
+Das war ein Fehler, keine drei. ELFIX erkannte ausschliesslich
+Cloudflare-Merkmale; die Warteseite von DDoS-Guard ging damit als gewöhnliche
+Antwort durch. Eine Trefferliste ohne Treffer, eine Folgenseite ohne Folgen,
+eine Quellensuche ohne Quelle — überall dasselbe leere Ergebnis, und nirgends
+der Satz „hier will jemand eine Bestätigung". Der Anbieter sah kaputt aus.
+
+### Die Regel, und warum sie so vorsichtig ist
+
+Wer hinter DDoS-Guard liegt, liegt **vollständig** dahinter. Server-Kopf,
+`__ddg`-Kekse und auf manchen Seiten auch das Prüfskript trägt damit jede
+Antwort — die richtige Folgenseite genauso wie die Warteseite. Keines dieser
+Merkmale ist für sich ein Tor; wer sie dafür hält, macht aus einem
+funktionierenden Anbieter eine Endlosbestätigung.
+
+Als Sperre gilt deshalb nur: ein Dokument mit DDoS-Guard-Merkmalen **und**
+entweder einer Warteseite als Titel oder einer abweisenden Antwort (403, 429,
+503). Dieselbe Bauart wie bei Cloudflare, wo ein `cf-ray`, ein JSD-Skript oder
+ein nacktes 403 ebenfalls nicht genügen.
+
+### Wo das steht
+
+| Stelle | Was sie tut |
+| --- | --- |
+| `src/cf-session.js` | Die Beweisregel für beide Dienste, dazu `anbieter` für Protokoll und Meldung. Über den Kern teilen sich Rechner und Android dieselbe |
+| `src/main.js` (`istAnbieterAbfrage`) | Die Suche benutzt jetzt diese Regel. Vorher hatte sie eine eigene, und genau deshalb fiel DDoS-Guard dem Player auf und der Suche nicht |
+| `Verifizierung.java` | Die Bestätigungsansicht am Telefon und am Fernseher erkennt die Warteseite als Tor |
+
+Unverändert bleibt das Wichtigste: **ELFIX löst nichts selbst.** Es erkennt die
+Sperre, zeigt die Seite, wartet auf die echte Freigabe durch den Menschen,
+sichert die Kekse und wiederholt den ursprünglichen Abruf. Kein Klick, kein
+Token, kein Fingerabdruck.
+
+### Was damit nicht behoben ist
+
+- Eine Warteseite, die mit HTTP 200 **und** unauffälligem Titel kommt, geht
+  weiterhin durch. Dagegen hilft nur ein Merkmal, das es dann noch gibt.
+- Lädt die Anbieterseite schon im Browserfenster von ELFIX nicht durch, liegt
+  es nicht an dieser Erkennung. Dann steht etwas anderes im Weg — der
+  Werbefilter, der das Prüfskript blockt, oder das Netz. Das ist getrennt zu
+  suchen; die `[CF]`-Zeilen im Protokoll sagen, welcher Dienst geantwortet hat.

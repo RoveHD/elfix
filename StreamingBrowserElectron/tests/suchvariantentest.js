@@ -96,6 +96,10 @@ function umgebungBauen() {
   const umgebung = {
     fetch, Headers, AbortSignal, URL, URLSearchParams, Set, Map, Array, String, Object, Promise, Number,
     RegExp, JSON, Math, Date, setTimeout, clearTimeout, decodeURIComponent, console,
+    // Seit die Suche dieselbe Beweisregel benutzt wie der Player, gehoert das
+    // echte Modul hierher und kein Platzhalter: eine zweite, eigene Erkennung
+    // war der Grund, warum DDoS-Guard vor AniWorld nur dem Player auffiel.
+    cfSession: require("../src/cf-session"),
     providerModel, enabledProviders: () => [],
     fremdtitelSuchen: async () => [],
     absoluteHttpUrl: fortschritt.absoluteHttpUrl,

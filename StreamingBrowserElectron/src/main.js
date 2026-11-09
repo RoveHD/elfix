@@ -2069,7 +2069,11 @@ ipcMain.handle("provider:context-menu", async (_event, name, punkt) => {
     const menue = Menu.buildFromTemplate([
       { label: titel || "Anbieter", enabled: false },
       { type: "separator" },
-      { label: "Cloudflare bestätigen", click: () => { gewaehlt = "cloudflare"; } },
+      // Der Eintrag heisst nicht mehr nach einem Dienst: vor denselben
+      // Anbietern sitzt mal Cloudflare, mal DDoS-Guard, und der Handgriff ist
+      // derselbe. Das Kennwort dahinter bleibt "cloudflare" - es ist eine
+      // interne Kennung, kein Text auf dem Schirm.
+      { label: "Anbieter bestätigen", click: () => { gewaehlt = "cloudflare"; } },
       { type: "separator" },
       { label: "Bearbeiten", click: () => { gewaehlt = "edit"; } },
       { label: "Neuer Anbieter", click: () => { gewaehlt = "new"; } }
@@ -6823,7 +6827,7 @@ async function searchProviderVariant(provider, query, signal, filter = query) {
       redirect: "follow"
     });
     const html = await response.text();
-    if (istCloudflareAbfrage(response, html)) {
+    if (istAnbieterAbfrage(response, html)) {
       return providerSearchFailure(provider, searchUrl, "cloudflare");
     }
     if (!response.ok) {
@@ -6857,12 +6861,26 @@ function anbieterAbruf(url, aufbau = {}) {
   return sitzung ? sitzung.fetch(url, { ...optionen, credentials: "include" }) : fetch(url, optionen);
 }
 
-/** Cloudflare antwortet mit einer Abfrageseite statt mit dem Inhalt. */
-function istCloudflareAbfrage(response, text) {
-  const mitigiert = String(response?.headers?.get?.("cf-mitigated") || "").toLowerCase() === "challenge";
-  if (mitigiert) return true;
+/**
+ * Der Torwaechter antwortet mit einer Abfrageseite statt mit dem Inhalt.
+ *
+ * <p>Hier stand eine zweite, eigene Cloudflare-Erkennung neben der des
+ * Players. Zwei Regelsaetze fuer dieselbe Frage laufen auseinander, und genau
+ * das ist passiert: als AniWorld DDoS-Guard davorsetzte, merkte es der Player,
+ * die Suche aber nicht. Sie hielt die Warteseite fuer eine Trefferliste ohne
+ * Treffer - also "gibt es dort nicht" statt "bestaetige dich".
+ *
+ * <p>Jetzt entscheidet zuerst dieselbe Beweisregel wie ueberall sonst
+ * ({@link cfSession.klassifizieren}). Die alte, lose Merkmalsliste bleibt als
+ * zweite Linie darunter, aber weiterhin nur bei einer abweisenden Antwort: auf
+ * HTTP 200 war sie nie ein Urteil und soll es nicht werden.
+ */
+function istAnbieterAbfrage(response, text) {
+  if (cfSession.klassifizieren({ status: Number(response?.status) || 0,
+    headers: response?.headers || {}, body: String(text || "") }).challenge) return true;
   if (![403, 429, 503].includes(Number(response?.status))) return false;
-  return /challenge-platform|cf-turnstile|cf_chl_|just a moment|einen moment/i.test(String(text || "").slice(0, 20000));
+  return /challenge-platform|cf-turnstile|cf_chl_|just a moment|einen moment|\.well-known\/ddos-guard|ddos-guard\.net/i
+    .test(String(text || "").slice(0, 20000));
 }
 
 async function searchProviderAjax(provider, query, searchUrl, signal, filter = query) {
@@ -9945,7 +9963,7 @@ async function anbieterSeiteOeffnen(provider, url, signal) {
           redirect: "follow", signal: AbortSignal.any([abbruch, AbortSignal.timeout(12000)]) });
         const text = await antwort.text();
         return antwort.ok && ![204, 205].includes(antwort.status) && Boolean(text.trim())
-          && !istCloudflareAbfrage(antwort, text);
+          && !istAnbieterAbfrage(antwort, text);
       } catch { return false; }
     }
   });

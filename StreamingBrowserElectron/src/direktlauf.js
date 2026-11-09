@@ -33,6 +33,18 @@
 const direktquelle = require("./direktquelle");
 const cfSession = require("./cf-session");
 
+/**
+ * Wer da sperrt - fuer die Meldung, die der Mensch zu sehen bekommt.
+ *
+ * <p>Vor denselben Anbietern stehen inzwischen zwei Torwaechter, und sie
+ * sehen verschieden aus. "Cloudflare-Bestaetigung erforderlich" ueber einer
+ * DDoS-Guard-Seite schickt beim Suchen nach dem Grund in die falsche
+ * Richtung.
+ */
+function torName(anbieter) {
+  return anbieter === "ddos-guard" ? "DDoS-Guard" : "Cloudflare";
+}
+
 /** So viele Stationen darf ein Weg haben. */
 const HOECHSTSTATIONEN = 4;
 
@@ -181,8 +193,8 @@ function erstellen(umgebung = {}) {
     if (gemeldet.challenge) {
       diagnose(cfSession.diagnose("challenge detected", details));
       try { await antwort.body?.cancel?.(); } catch { /* Response already closed. */ }
-      return { fehler: "Cloudflare-Bestaetigung erforderlich", challenge: true,
-        adresse: finalUrl, status: antwort.status, typ: "Challenge" };
+      return { fehler: `${torName(gemeldet.anbieter)}-Bestaetigung erforderlich`, challenge: true,
+        anbieter: gemeldet.anbieter, adresse: finalUrl, status: antwort.status, typ: "Challenge" };
     }
 
     // Erst die Groesse, dann der Text: eine Datei, die als Seite ausgeliefert
@@ -199,7 +211,8 @@ function erstellen(umgebung = {}) {
     if (text.length > HOECHSTGROESSE) return { fehler: "Antwort zu gross" };
     const zustand = cfSession.klassifizieren({ ...details, body: text });
     diagnose(cfSession.diagnose(zustand.challenge ? "challenge detected" : "response", { ...details, body: text }));
-    if (zustand.challenge) return { fehler: "Cloudflare-Bestaetigung erforderlich", challenge: true,
+    if (zustand.challenge) return { fehler: `${torName(zustand.anbieter)}-Bestaetigung erforderlich`,
+      challenge: true, anbieter: zustand.anbieter,
       adresse: finalUrl, status: antwort.status, typ: zustand.type };
     if (!antwort.ok) return { fehler: `HTTP ${antwort.status || "?"}` };
     return { text, adresse: finalUrl };

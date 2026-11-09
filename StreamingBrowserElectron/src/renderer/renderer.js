@@ -5669,7 +5669,7 @@ function cloudflareHinweis(response) {
     .filter(Boolean);
   let text = "";
   if (namen.length) {
-    text += ` ${namen.join(", ")} verlangt eine Cloudflare-Bestätigung: Rechtsklick auf den Anbieter → „Cloudflare bestätigen".`;
+    text += ` ${namen.join(", ")} verlangt eine Bestätigung: Rechtsklick auf den Anbieter → „Anbieter bestätigen".`;
   }
   if (langsam.length) text += ` Keine Antwort in der Zeit: ${langsam.join(", ")}.`;
   return text;

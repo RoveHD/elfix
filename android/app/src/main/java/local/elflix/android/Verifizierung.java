@@ -24,15 +24,19 @@ final class Verifizierung {
             + "const feld=box.querySelector('input[name=\"cf-turnstile-response\"],textarea[name=\"g-recaptcha-response\"],input[name=\"g-recaptcha-response\"],textarea[name=\"h-captcha-response\"],input[name=\"h-captcha-response\"]');"
             + "const r=box.getBoundingClientRect(),flaeche=Math.max(1,innerWidth*innerHeight);"
             + "tore.push({box,token:!!(feld&&String(feld.value||'').trim()),status:status(abfrage),blockiert:(r.width*r.height/flaeche)>=.2})}"
-            + "const titel=/just a moment|attention required|checking your browser|verify you are human|einen augenblick|sicherheitsabfrage/i.test(document.title||'');"
+            + "const titel=/just a moment|attention required|checking your browser|verify you are human|einen augenblick|sicherheitsabfrage|ddos[-\\s]?guard/i.test(document.title||'');"
             + "const formular=!!document.querySelector('input[name*=\"cf_chl\"],input[name*=\"cf-chl\"]');"
             + "if(!tore.length&&(titel||formular)&&document.body)tore.push({box:document.body,token:false,status:true,blockiert:true});return tore}";
     }
 
     static String zustandScript() {
         return "(()=>{const tore=(" + scanner() + ")();const tor=tore[0];"
-            + "const titel=/just a moment|attention required|checking your browser|verify you are human|einen augenblick|sicherheitsabfrage/i.test(document.title||'');"
-            + "const plattform=!!document.querySelector('script[src*=\"challenge-platform\"],script[src*=\"challenges.cloudflare.com\"]');"
+            + "const titel=/just a moment|attention required|checking your browser|verify you are human|einen augenblick|sicherheitsabfrage|ddos[-\\s]?guard/i.test(document.title||'');"
+            // Das Pruefskript des Torwaechters. DDoS-Guard steht hier neben
+            // Cloudflare, weil vor denselben Anbietern inzwischen beide
+            // sitzen. Es ist nur ein Merkmal, kein Urteil: der Anbieter laedt
+            // dasselbe Skript auch auf seinen richtigen Seiten.
+            + "const plattform=!!document.querySelector('script[src*=\"challenge-platform\"],script[src*=\"challenges.cloudflare.com\"],script[src*=\".well-known/ddos-guard\"]');"
             + "const token=!!(tor&&tor.token);const offen=titel||!!(tor&&(tor.status||tor.blockiert||(plattform&&tor.blockiert)));"
             + "const roh=String(document.body&&document.body.innerText||'').trim();"
             + "const inhalt=!!document.querySelector('video,source,iframe[src],[class*=\"player\"],[class*=\"hoster\"],[data-stream],[data-link-target],a[href*=\"/redirect/\"],a[href*=\"/episode-\"],a[href*=\"/folge-\"]')||/^#EXTM3U|^<\\?xml[^>]*>\\s*<MPD|^<MPD/i.test(roh);"
