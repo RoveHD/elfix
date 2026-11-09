@@ -3,6 +3,19 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.79 — 9. November 2026
+
+- Die Bestätigung bleibt nicht mehr bei „Bestätigung wird vorbereitet …"
+  hängen. ELFIX deckt die Anbieterseite ab und schneidet ein Loch für die
+  Abfrage hinein — das passt, solange die Abfrage ein Kasten in der Seite ist
+  (Cloudflare, S.to). Bei DDoS-Guard ist die ganze Seite die Abfrage, es gab
+  also nichts auszuschneiden, und die Abdeckung blieb liegen: die Abfrage lag
+  unsichtbar darunter und wartete auf jemanden, der sie nie zu sehen bekam.
+  Jetzt wird in diesem Fall aufgedeckt statt zugedeckt.
+- Rechtsklick auf einen Anbieter bietet „Anbieter öffnen" — zuoberst, über
+  „Anbieter bestätigen". Es öffnet dort, wo du warst; die Startseite des
+  Anbieters bleibt der Doppelklick auf die Kachel.
+
 ## 2.0.78 — 9. November 2026
 
 - AniWorld hinter DDoS-Guard funktioniert wieder. Gemeldet war dreierlei auf
