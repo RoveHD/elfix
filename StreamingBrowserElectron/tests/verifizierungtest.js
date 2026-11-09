@@ -29,6 +29,17 @@ assert.match(maske, /cdn-cgi\/challenge-platform/, "Cloudflares vollflaechige Fa
 // waere jede Seite eine Sperre.
 assert.match(maske, /echterInhalt/, "Ohne Inhaltspruefung waere jede Seite eine Sperre");
 
+// Das Raetselfenster von hCaptcha liegt nicht im Dialog, sondern am Ende der
+// Seite. Gemeldet fuer AniWorld: Haekchen gesetzt, und nichts passiert
+// sichtbar - das Fenster lag unter der Abdeckung. Das Loch muss um jedes
+// sichtbare Abfragefenster mitwachsen, sonst bedient man etwas, das man nicht
+// sieht.
+assert.match(maske, /hcaptcha\.com/, "Das hCaptcha-Fenster muss ins Loch");
+assert.match(maske, /kasten\.contains\(fenster\)/,
+  "Ein Fenster im Dialog ist ohnehin schon frei - nur die draussen zaehlen");
+assert.match(maske, /nurKasten/,
+  "Die Rundung gilt nur ohne zusaetzliches Fenster, sonst schnitte sie es ab");
+
 const main = fs.readFileSync(path.join(__dirname, "../src/main.js"), "utf8").replace(/\r\n/g, "\n");
 function funktion(name) {
   const start = main.search(new RegExp("(?:async )?function " + name + "\\("));

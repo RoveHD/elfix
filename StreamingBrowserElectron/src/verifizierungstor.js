@@ -247,7 +247,25 @@ function dialogMaskeScript(klickKennung = "", phase = "warten") {
     kasten.setAttribute(kenn, '');
     // Vier undurchsichtige Flaechen liegen auf der echten Seite. Das Loch
     // folgt dem Originaldialog; dessen DOM, Position und Stil bleiben erhalten.
-    const neu = kasten.getBoundingClientRect();
+    const kastenMasse = kasten.getBoundingClientRect();
+    // Das Raetselfenster gehoert ins Loch, auch wenn es nicht im Kasten liegt.
+    //
+    // hCaptcha haengt es ans Ende der Seite statt in den Dialog. Es lag damit
+    // unter der Abdeckung: wer das Haekchen setzt, sieht nichts weiter
+    // passieren. Das Loch waechst deshalb um jedes sichtbare Abfragefenster
+    // mit, und der Rahmen wandert nur dann noch um die Rundung des Dialogs,
+    // wenn gar keines dazugekommen ist - sonst schnitte sie es wieder ab.
+    let neu = kastenMasse;
+    for (const fenster of document.querySelectorAll('iframe[src*="hcaptcha.com"],iframe[src*="recaptcha"],iframe[src*="challenges.cloudflare.com"]')) {
+      if (!sichtbar(fenster) || kasten.contains(fenster)) continue;
+      const f = fenster.getBoundingClientRect();
+      if (f.width <= 0 || f.height <= 0) continue;
+      neu = { left: Math.min(neu.left, f.left), top: Math.min(neu.top, f.top),
+        right: Math.max(neu.right, f.right), bottom: Math.max(neu.bottom, f.bottom) };
+      neu.width = neu.right - neu.left;
+      neu.height = neu.bottom - neu.top;
+    }
+    const nurKasten = neu === kastenMasse;
     const links = Math.max(0, Math.min(innerWidth, neu.left));
     const rechts = Math.max(links, Math.min(innerWidth, neu.right));
     const oben = Math.max(0, Math.min(innerHeight, neu.top));
@@ -272,6 +290,7 @@ function dialogMaskeScript(klickKennung = "", phase = "warten") {
     }
     // Auch die Ecken ausserhalb der originalen Rundung abdecken, ohne
     // den Dialog oder seine interaktiven Inhalte zu veraendern.
+    if (!nurKasten) return stand;
     const rundung = document.createElement('span');
     rundung.style.cssText = 'position:absolute!important;pointer-events:none!important;background:transparent!important;'
       + 'left:'+neu.left+'px!important;top:'+neu.top+'px!important;width:'+neu.width+'px!important;height:'+neu.height+'px!important;'

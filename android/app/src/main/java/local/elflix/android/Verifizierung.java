@@ -46,7 +46,21 @@ final class Verifizierung {
 
     static String maskierenScript() {
         return "(()=>{const k='data-elfix-verifizierung',i='__elfixVerifizierungStil',alt=document.querySelector('['+k+']');"
-            + "const css='html,body{background:transparent!important;overflow:hidden!important}body *{visibility:hidden!important}['+k+'],['+k+'] *{visibility:visible!important}['+k+']{position:fixed!important;inset:0!important;transform:none!important;margin:0!important;width:100%!important;max-width:100%!important;max-height:100vh!important;box-sizing:border-box!important;overflow:auto!important;z-index:2147483647!important}';"
+            // Das Raetselfenster gehoert dazu, auch wenn es nicht im Kasten liegt.
+            //
+            // Gemeldet fuer AniWorld hinter DDoS-Guard: Haekchen gesetzt, und
+            // dann passiert nichts Sichtbares. hCaptcha haengt sein Fenster
+            // nicht in den Kasten, sondern ans Ende der Seite - und faellt
+            // damit unter "alles andere ausblenden". Zu sehen blieb ein
+            // blauer Zipfel. Bei S.to faellt das nicht auf, weil dessen
+            // Abfrage im selben Kasten bleibt.
+            //
+            // Sichtbarkeit wird vererbt, laesst sich aber je Element
+            // zurueckholen: der Rahmen des Fensters genuegt, sein Behaelter
+            // darf ausgeblendet bleiben.
+            + "const css='html,body{background:transparent!important;overflow:hidden!important}body *{visibility:hidden!important}"
+            + "iframe[src*=\"hcaptcha.com\"],iframe[src*=\"recaptcha\"],iframe[src*=\"challenges.cloudflare.com\"]{visibility:visible!important}"
+            + "['+k+'],['+k+'] *{visibility:visible!important}['+k+']{position:fixed!important;inset:0!important;transform:none!important;margin:0!important;width:100%!important;max-width:100%!important;max-height:100vh!important;box-sizing:border-box!important;overflow:auto!important;z-index:2147483647!important}';"
             + "const anwenden=box=>{box.setAttribute(k,'');const st=document.createElement('style');st.id=i;st.textContent=css;(document.head||document.documentElement).appendChild(st)};"
             + "document.getElementById(i)?.remove();document.querySelectorAll('['+k+']').forEach(e=>e.removeAttribute(k));"
             + "const tor=(" + scanner() + ")()[0];if(!tor){if(alt&&alt.isConnected)anwenden(alt);return JSON.stringify({ok:false,height:0})}anwenden(tor.box);"

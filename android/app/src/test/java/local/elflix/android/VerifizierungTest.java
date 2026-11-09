@@ -32,6 +32,14 @@ public class VerifizierungTest {
         assertTrue(zustand.contains("ddos[-\\s]?guard"));
         assertTrue(zustand.contains(".well-known/ddos-guard"));
         assertTrue(maske.contains("data-elfix-verifizierung"));
+        // Das Raetselfenster von hCaptcha haengt am Ende der Seite und nicht
+        // im Kasten. Ohne diese Regel faellt es unter "alles andere
+        // ausblenden": das Haekchen laesst sich setzen, das Raetsel danach
+        // nicht loesen, weil man es nicht sieht.
+        assertTrue(maske.contains("iframe[src*=\"hcaptcha.com\"]"));
+        assertTrue(maske.contains("iframe[src*=\"challenges.cloudflare.com\"]"));
+        assertTrue("Sichtbarkeit wird je Element zurueckgeholt",
+            maske.contains("{visibility:visible!important}"));
         String alles = zustand + maske;
         assertFalse(alles.contains(".click()"));
         assertFalse(alles.contains("requestSubmit"));
