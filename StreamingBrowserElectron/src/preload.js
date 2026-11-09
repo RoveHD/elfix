@@ -12,6 +12,16 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   setSettingsOpen: (isOpen) => ipcRenderer.invoke("settings:set-open", isOpen),
   setShellOpen: (isOpen) => ipcRenderer.invoke("shell:set-open", isOpen),
   openProvider: (id) => ipcRenderer.invoke("provider:open", id),
+  /**
+   * Die Anbieterseite als Seite - nicht als Werkbank.
+   *
+   * Im Direktbetrieb bleibt sie sonst im Hintergrund: ELFIX zeigt dann seine
+   * eigene Oberflaeche, weil die fuer Startseite, Katalog und Suche besser
+   * ist. Wer die Seite selbst will - zum Anmelden, zum Stoebern, zum
+   * Durchlaufen einer Abfrage -, kommt damit nirgends hin. Dieser Weg zeigt
+   * sie.
+   */
+  openProviderPage: (id) => ipcRenderer.invoke("provider:open-page", id),
   openProviderSearch: (id, query) => ipcRenderer.invoke("provider:search", id, query),
   openProviderUrl: (id, url) => ipcRenderer.invoke("provider:navigate", id, url),
   searchAll: (query) => ipcRenderer.invoke("search:all", query),

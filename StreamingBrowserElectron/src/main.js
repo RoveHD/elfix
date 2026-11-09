@@ -1254,6 +1254,29 @@ ipcMain.handle("provider:open", async (_event, providerId) => {
   return activeState();
 });
 
+/**
+ * Die Anbieterseite als Seite oeffnen.
+ *
+ * <p>Gemeldet zu "Anbieter oeffnen" im Rechtsklickmenue: "bringt mir gar nix".
+ * Stimmte. Der Eintrag ging denselben Weg wie der Klick auf die Kachel, und
+ * der endet im Direktbetrieb - dort wird die Anbieterseite absichtlich nie
+ * gezeigt ("sie ist dann Werkbank und nicht Fenster"), eine Startseite fuehrt
+ * zurueck in die eigene Oberflaeche mit dem Hinweis, dass die Anbieterseite im
+ * Hintergrund bleibt. Fuer jemanden, der genau diese Seite sehen will, ist das
+ * ein Knopf, der nichts tut.
+ *
+ * <p>Hier bleibt die Uebernahme aus: die Seite wird angehaengt und geladen wie
+ * bei abgeschaltetem Direktbetrieb. Zum Anmelden, zum Stoebern - und vor allem,
+ * um eine Abfrage des Anbieters selbst zu durchlaufen.
+ */
+ipcMain.handle("provider:open-page", async (_event, providerId) => {
+  const provider = enabledProviders().find((item) => item.id === providerId);
+  if (!provider) return null;
+  activeFavoriteId = null;
+  await navigateProvider(provider, provider.lastUrl || provider.startUrl, { alsSeite: true });
+  return activeState();
+});
+
 ipcMain.handle("provider:search", async (_event, providerId, query) => {
   const provider = enabledProviders().find((item) => item.id === providerId);
   if (!provider) return null;
@@ -3412,7 +3435,11 @@ async function navigateProvider(provider, url, optionen = {}) {
   // Bei offenem Overlay (Einstellungen, Oberflaeche) bleibt die View abgehaengt.
   // Im Direktbetrieb bleibt sie es immer: sie ist dann Werkbank und nicht
   // Fenster.
-  if (!attachedProviderViews.has(provider.id) && overlayReasons.size === 0 && !direktModus(target)) {
+  // `alsSeite` ist der ausdrueckliche Wunsch, die Seite zu sehen (siehe
+  // "provider:open-page"). Dann haengt sie an, auch im Direktbetrieb.
+  const alsSeite = Boolean(optionen.alsSeite);
+  if (!attachedProviderViews.has(provider.id) && overlayReasons.size === 0
+    && (alsSeite || !direktModus(target))) {
     mainWindow.contentView.addChildView(view);
     attachedProviderViews.add(provider.id);
   }
@@ -3434,7 +3461,7 @@ async function navigateProvider(provider, url, optionen = {}) {
   // Ladevorgang gewesen: unmittelbar nach `loadURL` nennt `getURL()` noch die
   // alte Adresse, und die Werkbank haette dieselbe Seite noch einmal geholt.
   // Das kostet nichts an Richtigkeit und alles an Zeit bis zum ersten Bild.
-  if (direktModus(target)) {
+  if (direktModus(target) && !alsSeite) {
     direktUebernehmen(provider, target, signal, optionen).catch(error => {
       console.error(`[ELFIX DIREKT] ${kurzeUrl(target)}: ${error?.stack || error}`);
     });

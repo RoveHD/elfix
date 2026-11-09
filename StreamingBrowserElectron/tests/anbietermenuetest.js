@@ -96,7 +96,8 @@ function buehne(antwort, cloudflare = "bestaetigt", route = "search") {
       },
       providerCloudflare: async (id) => { gerufen.cloudflare.push(id); return cloudflare; },
       openProvider: async (id) => { gerufen.geoeffnet.push(id); return { activeProviderId: id }; },
-      openProviderUrl: async (id, url) => { gerufen.geoeffnet.push(`${id}@${url}`); return { activeProviderId: id }; }
+      openProviderUrl: async (id, url) => { gerufen.geoeffnet.push(`${id}@${url}`); return { activeProviderId: id }; },
+      openProviderPage: async (id) => { gerufen.geoeffnet.push(`seite:${id}`); return { activeProviderId: id }; }
     },
     currentRoute: route,
     activeSearchQuery: "Avatar - Die sieben Häfen",
@@ -190,16 +191,29 @@ function buehne(antwort, cloudflare = "bestaetigt", route = "search") {
 
   // --- Anbieter oeffnen ---
   // Gewuenscht, weil das Menue bis hierher alles anbot ausser dem, was man am
-  // oeftesten will. Der Klick auf die Kachel tut dasselbe - nur steht der
-  // nicht zur Verfuegung, wenn das Menue schon offen ist.
+  // oeftesten will.
+  //
+  // Und es muss die Seite *als Seite* oeffnen. Der erste Anlauf nahm denselben
+  // Weg wie der Klick auf die Kachel, und der endet im Direktbetrieb: dort
+  // bleibt die Anbieterseite im Hintergrund, man landet wieder in der eigenen
+  // Oberflaeche. Gemeldet als "bringt mir gar nix" - zu Recht, denn wer das
+  // Menue dafuer aufmacht, will genau diese Seite sehen.
   const o = buehne("open");
   await (await o.karte(1)).ausloesen("contextmenu");
-  pruefe("\"Anbieter öffnen\" oeffnet genau diesen Anbieter",
-    JSON.stringify(o.gerufen.geoeffnet) === '["sto"]', JSON.stringify(o.gerufen.geoeffnet));
-  pruefe("und zwar dort, wo man war - nicht auf der Startseite des Anbieters",
-    !o.gerufen.geoeffnet.some((eintrag) => String(eintrag).includes("@")));
+  pruefe("\"Anbieter öffnen\" oeffnet die Seite dieses Anbieters als Seite",
+    JSON.stringify(o.gerufen.geoeffnet) === '["seite:sto"]', JSON.stringify(o.gerufen.geoeffnet));
+  pruefe("und gibt sie nicht an den Direktbetrieb weiter",
+    !o.gerufen.geoeffnet.includes("sto"));
   pruefe("Es oeffnet dabei keine Einstellungen und bestaetigt nichts",
     o.gerufen.settings.length === 0 && o.gerufen.cloudflare.length === 0);
+  // Der Kachelklick bleibt, wie er war - er ist der gewoehnliche Weg zum
+  // Schauen und soll weiter im Direktbetrieb landen.
+  const k = buehne("");
+  const kachel = await k.karte(1);
+  await kachel.ausloesen("dblclick");
+  pruefe("Der Doppelklick auf die Kachel fuehrt weiter auf die Startseite des Anbieters",
+    k.gerufen.geoeffnet.some((eintrag) => String(eintrag).includes("@")),
+    JSON.stringify(k.gerufen.geoeffnet));
 
   // --- Cloudflare bestaetigen ---
   const c = buehne("cloudflare");

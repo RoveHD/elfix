@@ -2948,11 +2948,13 @@ function providerCard(provider, large) {
  * das Menue haette es nachbauen muessen, und nachgebaut heisst
  * auseinanderlaufen.
  */
-async function anbieterOeffnen(provider, startUrl = false) {
+async function anbieterOeffnen(provider, startUrl = false, alsSeite = false) {
   hideContentViews();
-  const state = startUrl
-    ? await api.openProviderUrl(provider.id, provider.startUrl)
-    : await api.openProvider(provider.id);
+  const state = alsSeite
+    ? await api.openProviderPage?.(provider.id)
+    : startUrl
+      ? await api.openProviderUrl(provider.id, provider.startUrl)
+      : await api.openProvider(provider.id);
   activeProviderId = state?.activeProviderId || provider.id;
   setCurrentRoute(`provider:${activeProviderId}`);
   renderProviders();
@@ -2964,7 +2966,10 @@ async function anbieterMenue(provider, karte) {
   const anker = karte?.getBoundingClientRect();
   const punkt = anker ? { x: anker.left, y: anker.bottom + 4 } : null;
   const wahl = await api.providerContextMenu?.(provider.name, punkt).catch(() => "");
-  if (wahl === "open") await anbieterOeffnen(provider);
+  // Als Seite, nicht als Werkbank: wer das Menue dafuer aufmacht, will die
+  // Seite des Anbieters sehen. Der Klick auf die Kachel fuehrt weiterhin in
+  // den Direktbetrieb, und das bleibt der gewoehnliche Weg zum Schauen.
+  if (wahl === "open") await anbieterOeffnen(provider, false, true);
   else if (wahl === "cloudflare") await anbieterCloudflare(provider);
   else if (wahl === "edit") await anbieterBearbeiten(provider);
   else if (wahl === "new") await anbieterHinzufuegen();

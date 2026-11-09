@@ -62,12 +62,19 @@ pruefe("Eine Ansicht wird nur an bekannten Stellen eingehaengt",
 
 const navigation = haupt.slice(haupt.indexOf("async function navigateProvider"));
 const navBereich = navigation.slice(0, navigation.indexOf("\n}\n"));
+// Beide Regeln haben genau eine Ausnahme, und die heisst `alsSeite`: den
+// ausdruecklichen Wunsch, die Anbieterseite zu sehen ("Anbieter oeffnen" im
+// Rechtsklickmenue, provider:open-page). Ohne ihn bleibt alles, wie es war -
+// die Seite ist im Direktbetrieb Werkbank und kein Fenster.
 pruefe("Die Anbieteransicht wird im Direktbetrieb nicht eingehaengt",
-  /overlayReasons\.size === 0 && !direktModus\(target\)/.test(navBereich),
+  /overlayReasons\.size === 0\s*\n?\s*&& \(alsSeite \|\| !direktModus\(target\)\)/.test(navBereich),
   "sonst liegt die Seite sichtbar im Fenster");
 pruefe("Nach jeder Navigation uebernimmt der Direktbetrieb",
-  /if \(direktModus\(target\)\) \{\s*\n\s*direktUebernehmen\(provider, target, signal, optionen\)/.test(navBereich),
+  /if \(direktModus\(target\) && !alsSeite\) \{\s*\n\s*direktUebernehmen\(provider, target, signal, optionen\)/.test(navBereich),
   "sonst bliebe eine leere Flaeche stehen");
+pruefe("Die Ausnahme davon kommt nur auf ausdruecklichen Wunsch",
+  /const alsSeite = Boolean\(optionen\.alsSeite\)/.test(navBereich),
+  "sonst entschiede irgendein Nebenweg, ob die Seite sichtbar wird");
 // Und sie laedt die Seite selbst - hier zu laden hiesse, sie zweimal zu laden:
 // unmittelbar nach loadURL nennt getURL() noch die alte Adresse.
 pruefe("Geladen wird die Seite genau einmal",
