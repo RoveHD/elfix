@@ -3,6 +3,22 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.80 — 10. November 2026
+
+- Das Rätselfenster der Abfrage bleibt sichtbar. Bei AniWorld hinter
+  DDoS-Guard ließ sich „Ich bin ein Mensch" anhaken, und danach passierte
+  sichtbar nichts: hCaptcha hängt sein Rätsel ans Ende der Seite statt in den
+  Abfragekasten, und beide Masken blenden alles außerhalb des Kastens aus.
+  Jetzt gehören die Fenster von hCaptcha, reCAPTCHA und Turnstile dazu — am
+  Telefon wie am Rechner. Bei S.to fiel das nie auf, weil dessen Abfrage im
+  selben Kasten bleibt.
+- „Anbieter öffnen" im Rechtsklickmenü zeigt die Anbieterseite jetzt wirklich.
+  Vorher nahm der Eintrag denselben Weg wie der Klick auf die Kachel und
+  endete im Direktbetrieb, der die Seite absichtlich im Hintergrund hält — der
+  Knopf tat also nichts Sichtbares. Zum Anmelden, zum Stöbern und vor allem,
+  um eine Abfrage des Anbieters selbst zu durchlaufen. Kachelklick und
+  Doppelklick bleiben unverändert.
+
 ## 2.0.79 — 9. November 2026
 
 - Die Bestätigung bleibt nicht mehr bei „Bestätigung wird vorbereitet …"
