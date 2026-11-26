@@ -6,6 +6,18 @@ const path = require("node:path");
 const { app, BrowserWindow } = require("electron");
 const teilnehmer = require("../src/youtube-teilnehmer");
 let fenster;
+let schritt = "Electron starten";
+// executeJavaScript uebernimmt auch ausstehende Renderer-Promises. Bleibt
+// etwa requestFullscreen offen, erreicht die Pollingfrist ihren Check nie.
+// Das ist ein Testfehler mit Diagnose, kein Grund, Vollbild zu ueberspringen.
+const waechter = setTimeout(() => {
+  console.error(`YouTube-Teilnehmer-Fixture nach 30s nicht beendet: ${schritt}`);
+  if (fenster && !fenster.isDestroyed()) console.error(JSON.stringify({
+    sichtbar: fenster.isVisible(), fokus: fenster.isFocused(), minimiert: fenster.isMinimized(),
+    vollbild: fenster.isFullScreen(), laedt: fenster.webContents.isLoading()
+  }));
+  ende(1);
+}, 30000);
 
 const warten = (pruefen, ms = 3000) => new Promise((resolve, reject) => {
   const ende = Date.now() + ms;
@@ -24,11 +36,15 @@ app.whenReady().then(async () => {
   fenster = new BrowserWindow({ show: true, width: 960, height: 620, webPreferences: {
     sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false
   } });
+  schritt = "Fixture-Dokument laden";
   await fenster.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(`<!doctype html><style>
     body{margin:0;background:#111}.html5-video-player{position:relative;width:900px;height:506px;margin:20px;background:#333}
     .ytp-chrome-top{height:36px;color:#fff;padding:8px;box-sizing:border-box}
   </style><div id='movie_player' class='html5-video-player'><div class='ytp-chrome-top'>Titel · Teilen · Später ansehen</div></div>`));
-  const ausfuehren = code => fenster.webContents.executeJavaScript(code, true);
+  const ausfuehren = code => {
+    schritt = code.slice(0, 160);
+    return fenster.webContents.executeJavaScript(code, true);
+  };
   const status = { enabled: true, connected: true, joined: true, room: "Nachtkino", me: "mich",
     members: [{ id: "mich", name: "Elias" }, { id: "n", name: "Nora" }] };
   await ausfuehren(teilnehmer.anzeigeScript(status));
@@ -91,6 +107,7 @@ app.whenReady().then(async () => {
 }).then(() => ende(0), (fehler) => { console.error(fehler.stack || fehler); ende(1); });
 
 function ende(code) {
+  clearTimeout(waechter);
   fenster?.destroy();
   app.exit(code);
 }
