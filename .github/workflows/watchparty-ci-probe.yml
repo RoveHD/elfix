@@ -1,0 +1,59 @@
+name: Watchparty CI probe
+on:
+  push:
+    branches: [codex/watchparty-ci-probe]
+permissions:
+  contents: read
+jobs:
+  watchparty:
+    strategy:
+      fail-fast: false
+      matrix:
+        tracing: ['0', '1']
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: StreamingBrowserElectron/package-lock.json
+      - run: npm ci
+        working-directory: StreamingBrowserElectron
+      - run: npm ci --omit=dev
+        working-directory: sync-server
+      - name: Actual Windows paths
+        run: |
+          Write-Output "TEMP=$env:TEMP"
+          Write-Output "TMP=$env:TMP"
+          Write-Output "USERPROFILE=$env:USERPROFILE"
+          Write-Output "GITHUB_WORKSPACE=$env:GITHUB_WORKSPACE"
+      - name: Bundle fixture dependencies
+        working-directory: StreamingBrowserElectron
+        run: npm run pretest
+      - name: Three independent starts, fail on the first failure
+        run: |
+          foreach ($attempt in 1..3) {
+            Write-Output "Independent three-app start $attempt"
+            node tests/watchparty-drei-pc-electrontest.js
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+        working-directory: StreamingBrowserElectron
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          ELFIX_THREE_PC_TRACE: ${{ matrix.tracing }}
+      - name: Remaining Electron processes
+        if: always()
+        run: Get-CimInstance Win32_Process | Where-Object Name -eq 'electron.exe' | Select-Object ProcessId,ParentProcessId,CreationDate,CommandLine | ConvertTo-Json -Depth 4
+      - name: Keep isolated fixture logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: watchparty-fixture-logs-trace-${{ matrix.tracing }}
+          retention-days: 1
+          path: |
+            ${{ runner.temp }}/elfix-three-pc-*/*.log
+            ${{ runner.temp }}/elfix-three-pc-*/diagnostics.json
+            ${{ runner.temp }}/elfix-three-pc-*/*-processes.json
+            ${{ runner.temp }}/elfix-three-pc-*/pc*/chromium-trace.json
