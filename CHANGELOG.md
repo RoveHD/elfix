@@ -24,6 +24,10 @@ Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
   hinweg, sobald die vorherigen Staffellisten vollständig ermittelt sind.
 - Der Windows-Deinstaller bietet die ausdrückliche Wahl, zusätzlich lokale
   Benutzerdaten zu löschen. Updates und stille Deinstallationen behalten sie.
+- Aktualisiert: Electron 45.2.3, electron-builder 26.18.0,
+  electron-updater 6.8.11, HLS.js 1.7.4 und AdGuard tsurlfilter 6.1.0.
+  Die zusätzliche Watchparty-Diagnose mit drei getrennten App-Prozessen
+  kann direkt auf `main` von Hand gestartet werden.
 
 ## 2.0.80 — 10. November 2026
 
