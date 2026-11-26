@@ -1,5 +1,54 @@
 # Performance-Prüfung nach ELFIX 2.0.19
 
+## Nachprüfung am 14. Oktober 2026 (2.0.66)
+
+Bei gelegentlichen Hängern während einer s.to-Watchparty wurde die laufende
+Desktop-App 16 Sekunden lang ohne Wiedergabeeingriff gemessen. Kein RTX-Helfer
+war aktiv; der Hauptprozess lag durchschnittlich bei 19,4 Prozent eines
+CPU-Kerns, maximal bei 42 Prozent. Sein privater Speicher sank im Messfenster.
+Das schließt kurze Blockaden zwischen den Messpunkten nicht aus. In den
+geprüften Windows-Anwendungsereignissen der letzten drei Stunden fand sich
+kein ELFIX-Absturz oder registrierter Application Hang.
+
+Die beiden großen Caches enthalten inzwischen etwa 14,6 MB beziehungsweise
+8,4 MB JSON. Mit dem produktiven Cache-Schreibkanal und isolierten temporären
+Dateien blockierte bereits das synchrone Einreihen in den Worker für
+55–67 ms (Empfehlungen) beziehungsweise 37–39 ms (Metadaten), drei Läufe je
+Datei. Serialisierung und Dateiarbeit im Worker beheben diese Kopierkosten
+nicht. Ein separater `structuredClone`-Vergleich lag höher; er ist nicht mit
+der Dauer des produktiven Worker-Aufrufs gleichzusetzen. Favoriten und
+Sitzungen serialisieren und schreiben dauerte in acht isolierten Läufen
+maximal 6,7 beziehungsweise 7,3 ms.
+
+Der bestehende Aufschub für optionale Caches gilt jetzt während der gesamten
+Lebensdauer des Direktplayers, einschließlich Laden, Pause und PiP. Auch ein
+vor dem Playerstart geplanter Timer prüft die Sperre erneut. Nach dem
+Schließen wird je Cache der neueste Stand nachgeholt; beim App-Ende bleiben
+der unmittelbare Flush und die Worker-Barriere erhalten. Favoriten,
+Wiedergabefortschritt und Raumzustände werden weiter unverändert gespeichert.
+Ein bereits an den Worker übergebener Auftrag wird nicht abgebrochen. Bei
+einem Prozessabsturz können noch nicht gespeicherte optionale Cache-Updates
+erneut geladen werden müssen.
+
+Geprüft: `cache-schreibaufschubtest.js` verwendet zusätzlich die beiden
+produktiven Hauptprozess-Anbindungen und prüft normalen Player, PiP-Rückkehr,
+Nachholen und App-Ende. `cache-schreibarbeitertest.js` prüft weiterhin
+Zusammenfassung, atomare Ablage, Fehler, Wiederholung und Quit-Barriere.
+Dies ist ein belegter blockierender Codepfad, kein Nachweis, dass sämtliche
+gemeldeten Hänger ausschließlich dadurch entstanden sind. Eine laufende
+Watchparty wurde für die Diagnose weder neu gestartet noch unterbrochen.
+
+Zusätzlich wurde ein unabhängiger Watchparty-Fehler im Hoster-Rahmen
+reproduziert: Ein fremder Seek wurde nach Ablauf der bisherigen 1,5-Sekunden-
+Echo-Frist als Benutzeraktion zurückgemeldet. Die erzeugten Seitenskripte
+merken Fernsprünge jetzt am jeweiligen Video und an seiner Quelle bis zum
+Abschluss des Sprungs. Ein echter anderer Nutzersprung, Quellenwechsel oder
+Rundenreset beendet diesen Merker. Play/Pause behalten ihren getrennten
+Echo-Schutz. Die Präzisionstests prüfen kurze und lange Seeks, überlappende
+Aufträge, Weiterlaufen der Filmzeit, echte Bedienung und Quellenwechsel.
+Der Direktplayer hat einen eigenen Steuerungspfad; dieser Befund belegt
+deshalb nicht die Ursache jedes Hängers bei aktiviertem Direktmodus.
+
 Stand: 8. September 2026. Die folgenden Befunde sind von der veröffentlichten Version 2.0.19 zu unterscheiden.
 
 ## Umgesetzte Vorschau-Korrektur

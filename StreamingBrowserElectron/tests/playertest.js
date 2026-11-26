@@ -481,10 +481,11 @@ const ereignis = (felder) => ({ videoTime: 0, timestamp: Date.now(), playing: fa
     // 14g. Beim Sprung entscheidet die Stelle, nicht die Art: wer waehrend
     // eines fremden Sprungs selbst woandershin spult, meint das ernst.
     {
-      const m = video(300, { paused: false });
+      const m = video(250, { paused: false });
       const welt = seite([m]);
       laufen(welt, beobachterScript());
-      welt.fenster.__elfixWpErwartet = { aktion: "seek", ziel: 300, bis: Date.now() + 1500 };
+      await ausfuehren(applyScript("seek", ereignis({ videoTime: 300, playing: false }),
+        { genau: true }), m, welt.fenster);
       welt.feuern("seeked", m);
       const echo = welt.logs.map(aktionLesen).filter((t) => t && t.aktion === "seek").length;
       m._zeit = 900;

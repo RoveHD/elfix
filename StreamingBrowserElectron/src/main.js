@@ -4,6 +4,10 @@ const fs = require("fs");
 const path = require("path");
 const ipcSchutz = require("./ipc-schutz");
 const spielerNetz = require("./spieler-netz");
+const dynexVideo = require("./dynex-video").erstellen({
+  prozesse: () => [process.pid, ...app.getAppMetrics().filter(p => p.type === "Utility").map(p => p.pid)]
+});
+app.once("will-quit", () => dynexVideo.schliessen());
 const videoUpscalingStatus = require("./video-upscaling-status");
 const cfSession = require("./cf-session");
 let sprachchatFenster = null;
@@ -1008,7 +1012,9 @@ function publicUpdateState() {
 }
 
 function configureBrowserSession() {
+  dynexVideo.beobachten(browserSession, { antwortSchonBelegt: true });
   browserSession.webRequest.onResponseStarted((details) => {
+    dynexVideo.antwort(browserSession, details);
     if (details.statusCode < 200 || details.statusCode >= 400) return;
     direktBeobachter.get(details.webContentsId)?.({
       adresse: details.url, rahmen: frameQuelle(details)
@@ -10786,6 +10792,7 @@ function spielerSessionHolen() {
     onResponse: spielerStreamAntwort,
     requestHeaders: () => spielerKopfzeilen || {}
   });
+  dynexVideo.beobachten(spielerSession);
   spielerSession.webRequest.onBeforeSendHeaders((details, callback) => {
     // Die eigene Seite kommt von der Platte und braucht nichts davon.
     if (!spielerKopfzeilen || !/^https?:/i.test(details.url || "")) {
@@ -15075,13 +15082,13 @@ function loadTasteCache() {
 }
 
 // Der Cache wird nur verzoegert geschrieben, damit ein Durchlauf mit vielen
-// Seiten nicht dutzende Male dieselbe Datei anfasst. Im nativen Mini-Player
-// hat die Fensterbewegung Vorrang: auch das strukturierte Klonen zum Worker
-// kostet Hauptprozesszeit. JSON-Serialisierung und atomare Dateiarbeit laufen
-// dort im Hintergrund. Nach PiP wird der juengste Speicherstand nachgeholt.
+// Seiten nicht dutzende Male dieselbe Datei anfasst. Solange der Player offen
+// ist, hat die Wiedergabe Vorrang: das strukturierte Klonen grosser Caches zum
+// Worker blockiert den Hauptprozess trotz asynchroner Dateiarbeit. Erst nach
+// dem Schliessen wird der juengste Stand nachgeholt; App-Ende leert ihn sofort.
 tasteCacheAblage = cacheSchreibaufschub.erstellen({
   wartenMs: 1500,
-  gesperrt: () => spielerMiniAktiv,
+  gesperrt: () => spielerMiniAktiv || Boolean(spielerView),
   schreiben: () => {
     try {
       cacheSchreibkanal.schreiben(TASTE_FILE, loadTasteCache());
@@ -15257,7 +15264,7 @@ let metadatenStand = null;
 
 metadatenCacheAblage = cacheSchreibaufschub.erstellen({
   wartenMs: 2000,
-  gesperrt: () => spielerMiniAktiv,
+  gesperrt: () => spielerMiniAktiv || Boolean(spielerView),
   schreiben: () => {
     try {
       if (metadatenStand) cacheSchreibkanal.schreiben(METADATEN_FILE, metadatenStand);

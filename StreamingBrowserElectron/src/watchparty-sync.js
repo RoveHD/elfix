@@ -481,6 +481,32 @@ function alsQuelltext(...funktionen) {
 // und weil sie sich so gegen ein nachgebautes Video pruefen lassen, statt nur
 // als Zeichenkette durch die Gegend gereicht zu werden.
 
+// Ein Seek kann beim Nachladen laenger dauern als ein Play/Pause-Echo. Sein
+// Merker gehoert deshalb zum Video und zur Quelle, bis seeked ihn quittiert.
+// Ein neuer Fernsprung ersetzt den alten (HTMLMediaElement bricht ihn ab).
+function fremdenSprungSetzen(media, stelle) {
+  const spruenge = window.__elfixWpSpruenge ||= new WeakMap();
+  spruenge.set(media, { ziel: Number(stelle), quelle: String(media.currentSrc || media.src || "") });
+  try { media.currentTime = stelle; } catch (fehler) {
+    spruenge.delete(media);
+    throw fehler;
+  }
+}
+
+function fremderSprung(media, quittieren = false) {
+  const spruenge = window.__elfixWpSpruenge;
+  const erwartet = spruenge?.get(media);
+  if (!erwartet) return false;
+  const passt = erwartet.quelle === String(media.currentSrc || media.src || "")
+    && ((quittieren && erwartet.begonnen)
+      || Math.abs(Number(media.currentTime) - erwartet.ziel) <= 0.001);
+  // Auch ein eigener Sprung beendet den bisherigen Auftrag. Sonst koennte ein
+  // spaeterer Nutzersprung zur alten Zielstelle faelschlich verschluckt werden.
+  if (!passt || quittieren) spruenge.delete(media);
+  else erwartet.begonnen = true;
+  return passt;
+}
+
 // Ein Befehl von aussen. Waehrend er ausgefuehrt wird, meldet dieses Geraet
 // selbst nichts zurueck.
 //
@@ -500,7 +526,7 @@ function applyScript(action, ereignis, optionen = {}) {
   const genau = optionen.genau ? "true" : "false";
   const warten = optionen.warten ? "true" : "false";
   return `(async () => {
-    ${alsQuelltext(zielZeitBerechnen, startPlan)}
+    ${alsQuelltext(zielZeitBerechnen, startPlan, fremdenSprungSetzen)}
 
     const medien = Array.from(document.querySelectorAll("video")).filter((m) => Number(m.duration) > 0);
     const media = medien.sort((links, rechts) => rechts.duration - links.duration)[0];
@@ -590,7 +616,7 @@ function applyScript(action, ereignis, optionen = {}) {
       // Drei kurze, begrenzte Versuche sind genug; danach bleibt das Ergebnis
       // sichtbar als "ungenau", statt eine alte Aktion endlos fortzusetzen.
       for (let versuch = 0; versuch < 3 && aktuell(); versuch += 1) {
-        if (Math.abs(Number(media.currentTime) - stelle) > toleranz) media.currentTime = stelle;
+        if (Math.abs(Number(media.currentTime) - stelle) > toleranz) fremdenSprungSetzen(media, stelle);
         if (await abwarten(stelle, 450, toleranz)) return true;
       }
       return Math.abs(Number(media.currentTime) - stelle) <= toleranz
@@ -636,7 +662,7 @@ function applyScript(action, ereignis, optionen = {}) {
         // Ein nennenswerter später Timer wird einmal direkt korrigiert.
         if (nachgerechnet >= 0 && nachgerechnet <= media.duration
           && Math.abs(Number(media.currentTime) - nachgerechnet) > 0.02) {
-          media.currentTime = nachgerechnet;
+          fremdenSprungSetzen(media, nachgerechnet);
           merken.ziel = nachgerechnet;
           window.__elfixWpErwartet = merken;
         }
@@ -678,7 +704,7 @@ function applyScript(action, ereignis, optionen = {}) {
             const soll = zielJetzt();
             const rueckstand = soll - stelle;
             if (rueckstand > 0.6 && rueckstand < 15 && soll >= 0 && soll <= media.duration) {
-              media.currentTime = soll;
+              fremdenSprungSetzen(media, soll);
               merken.ziel = soll;
               merken.bis = Date.now() + 1500;
               window.__elfixWpErwartet = merken;
@@ -720,7 +746,7 @@ function applyScript(action, ereignis, optionen = {}) {
 // Laufzeit liegt.
 function driftScript(ereignis) {
   return `(() => {
-    ${alsQuelltext(zielZeitBerechnen, driftEntscheiden)}
+    ${alsQuelltext(zielZeitBerechnen, driftEntscheiden, fremdenSprungSetzen)}
 
     const medien = Array.from(document.querySelectorAll("video"))
       .filter((m) => Number(m.duration) > 0);
@@ -747,7 +773,7 @@ function driftScript(ereignis) {
     if (tat === "hard-seek") {
       // Frisch nachrechnen: zwischen Messung und Sprung liegt zwar wenig Zeit,
       // aber es kostet nichts, und der Sprung soll sitzen.
-      try { media.currentTime = zielJetzt(); } catch (_) {}
+      try { fremdenSprungSetzen(media, zielJetzt()); } catch (_) {}
     }
 
     // "ignore" ist der Normalfall und soll im Log sichtbar sein - aber nicht
@@ -869,7 +895,7 @@ function beobachterScript() {
     window.__elfixWpErwartet = null;
     window.__elfixWpEcho = [];
 
-    ${alsQuelltext(genaueZahl)}
+    ${alsQuelltext(genaueZahl, fremderSprung)}
 
     // requestVideoFrameCallback liefert die Medienzeit des tatsächlich
     // gezeichneten Frames. currentTime kann dazwischen liegen und beschreibt
@@ -902,6 +928,10 @@ function beobachterScript() {
         && Number.isFinite(stelle) && Math.abs(wert - stelle) < 0.25 ? wert : null;
     };
     const frameVergessen = (media) => {
+      if (window.__elfixWpSpruenge?.has(media)) {
+        window.__elfixWpGeneration = (Number(window.__elfixWpGeneration) || 0) + 1;
+        window.__elfixWpSpruenge.delete(media);
+      }
       const zustand = frames.get(media);
       if (zustand) zustand.gueltig = false;
       frames.delete(media);
@@ -924,17 +954,9 @@ function beobachterScript() {
       for (let index = 0; index < offen.length; index += 1) {
         const erwartet = offen[index];
         if (!erwartet || Date.now() >= erwartet.bis) continue;
-        // Beim Sprung entscheidet die Stelle: nur der Sprung auf genau das
-        // erwartete Ziel ist das Echo. Wer waehrenddessen selbst woandershin
-        // spult, meint das ernst - vorher verschluckte diese Pruefung jeden
-        // zweiten Sprung, weil sie nur auf die Art schaute.
-        if (aktion === "seek") {
-          if (Math.abs(Number(media.currentTime) - erwartet.ziel) <= 0.001) {
-            window.__elfixWpEcho = offen.filter((eintrag, i) => i !== index && eintrag && Date.now() < eintrag.bis);
-            if (window.__elfixWpErwartet === erwartet) window.__elfixWpErwartet = null;
-            return;
-          }
-        } else if (aktion === erwartet.aktion) {
+        // Seek-Echos werden getrennt am Video quittiert. Diese kurze Liste
+        // gehoert nur den unmittelbar ausgeloesten Play/Pause-Ereignissen.
+        if (aktion !== "seek" && aktion === erwartet.aktion) {
           window.__elfixWpEcho = offen.filter((eintrag, i) => i !== index && eintrag && Date.now() < eintrag.bis);
           if (window.__elfixWpErwartet === erwartet) window.__elfixWpErwartet = null;
           return;
@@ -1020,12 +1042,12 @@ function beobachterScript() {
       if (!intern) window.__elfixWpGeneration = (Number(window.__elfixWpGeneration) || 0) + 1;
       melden("pause", media); standMelden(media, true);
     });
+    horchen("seeking", (media) => { fremderSprung(media); });
     horchen("seeked", (media) => {
-      const liste = Array.isArray(window.__elfixWpEcho) ? window.__elfixWpEcho : [];
-      const intern = liste.some((eintrag) => eintrag && Date.now() < eintrag.bis
-        && Math.abs(Number(media.currentTime) - Number(eintrag.ziel)) < 0.001);
+      const intern = fremderSprung(media, true);
       if (!intern) window.__elfixWpGeneration = (Number(window.__elfixWpGeneration) || 0) + 1;
-      melden("seek", media); standMelden(media, true);
+      if (!intern) melden("seek", media);
+      standMelden(media, true);
     });
     // Ein neuer Source darf niemals die Framezeit der vorherigen Folge
     // mitsenden. Der neue Callback wird sofort wieder scharf gemacht.
@@ -1160,6 +1182,9 @@ function zuruecksetzenScript() {
   return `(() => {
     window.__elfixWpSync = { bestaetigt: 0, seitSprung: 0, letzteMessung: 0, gemeldet: 0 };
     window.__elfixWpGeneration = (Number(window.__elfixWpGeneration) || 0) + 1;
+    window.__elfixWpSpruenge = new WeakMap();
+    window.__elfixWpEcho = [];
+    window.__elfixWpErwartet = null;
     return "zurueckgesetzt";
   })()`;
 }
