@@ -313,16 +313,21 @@ const anDenAnfang = (m) => m.type === "control"
     B.leeren(); H.leeren();
     B.send({ type: "syncall", key: KEY, position: B.stelle });
 
-    const halt = await B.erwarte((m) => m.type === "syncprepare", 1800);
+    const halt = await B.erwarte((m) => m.type === "syncprepare" && !m.syncId, 1800);
     pruefe("I. Der Knopf haelt alle an",
       halt && halt.playing === false,
       halt ? `playing=${halt.playing} bei ${Math.round(halt.position)}s` : "kein syncprepare");
     pruefe("I2. Auf der Stelle des Hosts",
       halt && Number(halt.position) > 900,
       halt ? `${Math.round(halt.position)}s` : "-");
+    // Der Empfang bei B sagt nichts darueber, ob H seinen eigenen Socket
+    // schon gelesen hat. Auch beim Host auf genau diesen Abgleich warten;
+    // eine Vorbereitung des vorherigen Play waere kein Nachweis.
+    const hostHalt = await H.erwarte((m) => m.type === "syncprepare"
+      && m.sequenceId === halt?.sequenceId, 1800);
     pruefe("I3. Und der Host bekommt es auch",
-      H.alle((m) => m.type === "syncprepare").length > 0,
-      `${H.alle((m) => m.type === "syncprepare").length} Meldungen`);
+      Boolean(hostHalt),
+      hostHalt ? `sequenceId=${hostHalt.sequenceId}` : "keine Meldung");
 
     // Und es bleibt dabei: kein Start hinterher.
     B.leeren(); H.leeren();
