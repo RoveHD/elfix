@@ -3,6 +3,28 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.81 — 26. November 2026
+
+- Der Windows-Player zeigt bei der Watchparty pro Person, ob eine Quelle gesucht,
+  eine Anbieterbestätigung benötigt oder das Video geladen wird. Nach 90 Sekunden
+  ohne gemeinsamen Start wird die Wiedergabe einmal zurückgesetzt und für die
+  Teilnehmer nacheinander neu geladen. Fehlgeschlagene Teilnehmer blockieren den
+  anschließenden Start der übrigen nicht dauerhaft; die Wiederverbindung lässt
+  sich abbrechen und die Raumzugehörigkeit bleibt erhalten. Dafür müssen App
+  und Watchparty-Relay aktualisiert werden.
+- Verspätete Serien- und Fortschrittsmeldungen können die Zielfolge einer
+  laufenden Startvorbereitung nicht mehr zurücksetzen. Ferngesteuerte Sprünge
+  werden auch bei längerem Nachladen nicht als eigene Nutzersprünge zurückgemeldet.
+- Suchtreffer fertiger Anbieter sind sofort nutzbar, während weitere Anbieter
+  noch suchen. Empfehlungen werden in kurzen Arbeitsschritten berechnet; bereits
+  gespeicherte Vorschläge erscheinen sofort. Große Cache-Schreibvorgänge warten,
+  solange der Player geöffnet ist.
+- Beim Abhaken gesehener Folgen bleibt die Scrollposition erhalten. Die
+  Folgenauswahl zeigt zusätzlich die fortlaufende Folgennummer über Staffeln
+  hinweg, sobald die vorherigen Staffellisten vollständig ermittelt sind.
+- Der Windows-Deinstaller bietet die ausdrückliche Wahl, zusätzlich lokale
+  Benutzerdaten zu löschen. Updates und stille Deinstallationen behalten sie.
+
 ## 2.0.80 — 10. November 2026
 
 - Das Rätselfenster der Abfrage bleibt sichtbar. Bei AniWorld hinter
