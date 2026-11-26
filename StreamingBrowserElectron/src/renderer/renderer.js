@@ -5374,10 +5374,15 @@ function searchResultCard(result, provider, suche = "", quellen = []) {
   bildEbeneSetzen(card, result.image || result.thumbnail || "", null);
 
   let quellenLeiste = null;
-  if (quellen.length > 1) {
-    quellenLeiste = document.createElement("div");
-    quellenLeiste.className = "result-provider-choices";
-    quellenLeiste.setAttribute("aria-label", "Anbieter für diesen Titel auswählen");
+  const quellenZeichnen = () => {
+    if (quellen.length <= 1) return;
+    if (!quellenLeiste) {
+      quellenLeiste = document.createElement("div");
+      quellenLeiste.className = "result-provider-choices";
+      quellenLeiste.setAttribute("aria-label", "Anbieter für diesen Titel auswählen");
+      card.append(quellenLeiste);
+    }
+    quellenLeiste.replaceChildren();
     for (const quelle of quellen) {
       const button = document.createElement("button");
       button.type = "button";
@@ -5398,8 +5403,8 @@ function searchResultCard(result, provider, suche = "", quellen = []) {
       });
       quellenLeiste.append(button);
     }
-    card.append(quellenLeiste);
-  }
+  };
+  quellenZeichnen();
 
   const oeffnen = async () => {
     hideContentViews();
@@ -5469,6 +5474,18 @@ function searchResultCard(result, provider, suche = "", quellen = []) {
     title: result.title,
     image: result.image || result.thumbnail || ""
   });
+  // Spaeter fertige Anbieter ergaenzen dieselbe Karte. Die bereits gewaehlte
+  // Quelle und ein laufender Watchlist-Klick bleiben dabei erhalten.
+  card.updateSearchSources = (neu) => {
+    const vorher = ausgewaehlt;
+    const fokus = quellenLeiste?.contains(document.activeElement);
+    quellen = neu;
+    ausgewaehlt = quellen.find((quelle) => quelle.provider.providerId === vorher.provider.providerId
+      && quelle.result.url === vorher.result.url) || quellen[0];
+    quellenZeichnen();
+    setzeAuswahl(ausgewaehlt);
+    if (fokus) quellenLeiste?.querySelector(".is-active")?.focus();
+  };
   return card;
 }
 
@@ -5630,45 +5647,90 @@ function stehtInWatchlist(url) {
 }
 
 async function renderProviderResults(query, searchToken) {
-  const response = await api.searchAll(query);
-  if (searchToken !== activeSearchToken) return;
+  const cards = new Map();
+  const results = new Map();
+  let response = [];
+  const zeichnen = (snapshot, fertig = false) => {
+    if (searchToken !== activeSearchToken) return;
+    response = (Array.isArray(snapshot) ? snapshot : []).map((provider) => ({
+      ...provider,
+      results: (provider.results || []).map((result) => {
+        const key = JSON.stringify([provider.providerId, result.url]);
+        const vorhanden = results.get(key);
+        if (vorhanden) return Object.assign(vorhanden, result);
+        results.set(key, result);
+        return result;
+      })
+    }));
 
-  const resultNodes = [];
-  const ohneBild = [];
-  let total = 0;
-  const gruppen = searchGroupingModul?.groupProviderResults?.(response) || [];
-  for (const gruppe of gruppen) {
-    const erste = gruppe.entries[0];
-    if (!erste) continue;
-    total += gruppe.entries.length;
-    const karte = searchResultCard(erste.result, erste.provider, query, gruppe.entries);
-    resultNodes.push(karte);
-    // Alle Quellen duerfen ihr vorhandenes Bild verwenden. Fehlt es, bleibt
-    // die bisherige, token-geschuetzte Nachreichung pro Anbieteradresse aktiv.
-    for (const eintrag of gruppe.entries) {
-      const result = eintrag.result;
-      if (!result.image && !result.thumbnail && result.url) {
-        ohneBild.push({
-          karte,
-          result,
-          treffer: { providerId: eintrag.provider.providerId, url: result.url, title: result.title }
-        });
+    const resultNodes = [];
+    const ohneBild = [];
+    let total = 0;
+    const gruppen = searchGroupingModul?.groupProviderResults?.(response) || [];
+    for (const gruppe of gruppen) {
+      const erste = gruppe.entries[0];
+      if (!erste) continue;
+      total += gruppe.entries.length;
+      const key = gruppe.key.startsWith("single:")
+        ? JSON.stringify([erste.provider.providerId, erste.result.url]) : gruppe.key;
+      const sources = JSON.stringify(gruppe.entries.map((eintrag) => [eintrag.provider.providerId, eintrag.result.url]));
+      let gespeichert = cards.get(key);
+      if (!gespeichert) {
+        gespeichert = { karte: searchResultCard(erste.result, erste.provider, query, gruppe.entries), sources };
+        cards.set(key, gespeichert);
+      } else if (gespeichert.sources !== sources) {
+        gespeichert.karte.updateSearchSources(gruppe.entries);
+        gespeichert.sources = sources;
+      }
+      const karte = gespeichert.karte;
+      resultNodes.push(karte);
+      // Alle Quellen duerfen ihr vorhandenes Bild verwenden. Fehlt es, bleibt
+      // die bisherige, token-geschuetzte Nachreichung pro Anbieteradresse aktiv.
+      for (const eintrag of gruppe.entries) {
+        const result = eintrag.result;
+        if (!result.image && !result.thumbnail && result.url) {
+          ohneBild.push({
+            karte,
+            result,
+            treffer: { providerId: eintrag.provider.providerId, url: result.url, title: result.title }
+          });
+        }
       }
     }
-  }
 
-  document.querySelectorAll(".search-loading").forEach((node) => node.remove());
-  if (resultNodes.length) {
-    globalSearchGrid.prepend(...resultNodes);
-  } else {
-    const empty = emptyText("Keine Direktsuche-Treffer erkannt. Direktsuchen unten öffnen.");
-    globalSearchGrid.prepend(empty);
+    if (fertig) document.querySelectorAll(".search-loading").forEach((node) => node.remove());
+    if (resultNodes.length) {
+      const fokus = globalSearchGrid.contains(document.activeElement) ? document.activeElement : null;
+      globalSearchGrid.prepend(...resultNodes);
+      if (fokus && document.activeElement !== fokus) fokus.focus({ preventScroll: true });
+    } else if (fertig) {
+      const empty = emptyText("Keine Direktsuche-Treffer erkannt. Direktsuchen unten öffnen.");
+      globalSearchGrid.prepend(empty);
+    }
+    document.querySelector("#searchCopy").textContent = (total
+      ? `${total} Treffer aus deinen Anbietern.${fremdtitelHinweis(response, query)}`
+      : fertig ? "Keine direkten Treffer erkannt. Du kannst weiterhin jede Direktsuche öffnen." : "")
+      + (fertig ? "" : " Weitere Anbieter werden durchsucht …")
+      + cloudflareHinweis(response);
+    if (fertig) trefferbilderNachreichen(ohneBild, searchToken);
+  };
+  // Vor dem IPC-Aufruf anmelden: auch ein sofort fertiger Anbieter darf nicht
+  // zwischen Anfrage und Listener verloren gehen. Token UND Anfragekennung
+  // schuetzen wiederholte gleichlautende Suchen vor alten Zwischenstaenden.
+  const abmelden = api.onSearchProgress?.((fortschritt) => {
+    if (fortschritt?.requestId !== searchToken || fortschritt.query !== String(query).trim()) return;
+    zeichnen(fortschritt.results);
+  });
+  try {
+    zeichnen(await api.searchAll(query, searchToken), true);
+  } catch {
+    if (searchToken === activeSearchToken) {
+      zeichnen(response, true);
+      document.querySelector("#searchCopy").textContent = "Die Suche konnte nicht vollständig geladen werden. Du kannst jede Direktsuche öffnen.";
+    }
+  } finally {
+    abmelden?.();
   }
-  document.querySelector("#searchCopy").textContent = (total
-    ? `${total} Treffer aus deinen Anbietern.${fremdtitelHinweis(response, query)}`
-    : "Keine direkten Treffer erkannt. Du kannst weiterhin jede Direktsuche öffnen.")
-    + cloudflareHinweis(response);
-  trefferbilderNachreichen(ohneBild, searchToken);
 }
 
 /**

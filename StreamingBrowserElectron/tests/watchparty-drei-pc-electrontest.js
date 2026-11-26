@@ -40,7 +40,7 @@ async function freePort() {
   await new Promise(resolve => server.close(resolve)); return port;
 }
 function client(index, relayUrl) {
-  const config = { profile: path.join(root, "pc" + index), name: "PC " + index, room, relay: relayUrl,
+  const config = { profile: path.join(root, "pc" + index), name: "PC " + index, room, relay: relayUrl, hidden: true,
     origin: ["http://serienstream.to", "http://serienstream.cx", "http://186.2.175.5"][index - 1] };
   fs.mkdirSync(config.profile, { recursive: true });
   const child = spawn(require("electron"), [path.join(__dirname, "watchparty-drei-pc-client.js")], {
@@ -70,7 +70,7 @@ function client(index, relayUrl) {
   clients.push(api); return api;
 }
 const readPlayer = pc => pc.player(`({at:Date.now(),time:bild.currentTime,paused:bild.paused,ready:bild.readyState,
-  waiting:!document.getElementById('warteAufAlle').hidden,src:bild.currentSrc,error:bild.error?.message,
+  waiting:rundeWarten,src:bild.currentSrc,error:bild.error?.message,
   playButton:{title:knopfSpielen.title,disabled:knopfSpielen.disabled,text:knopfSpielen.textContent},
   inParty:inRunde,episode:Number(bild.currentSrc.match(/fixture-([0-9]+)/)?.[1]),members:document.getElementById('runde').childElementCount})`);
 async function main() {

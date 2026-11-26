@@ -23,6 +23,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { performance } = require("node:perf_hooks");
 const sync = require("../src/watchparty-sync");
 
 const WURZEL = path.join(__dirname, "..");
@@ -146,7 +147,7 @@ function spielerKontext(bild) {
   const still = { log() {}, warn() {}, error() {}, info() {} };
   const vorschau = { erstellen: () => ({ quelle() {}, zeigen: async () => ({}), verbergen() {}, zerstoeren() {} }) };
   const c = vm.createContext({
-    window: { elfixSpieler: bruecke, ElfixSpielerVorschau: vorschau, ElfixUntertitelwahl: require("../src/untertitelwahl"), addEventListener() {} }, navigator: {}, console: still, Date, Event, Promise,
+    window: { elfixSpieler: bruecke, ElfixSpielerVorschau: vorschau, ElfixUntertitelwahl: require("../src/untertitelwahl"), addEventListener() {} }, navigator: {}, console: still, Date, Event, Promise, performance,
     document: { getElementById: element, createElement: () => element(Symbol()), addEventListener() {} },
     setTimeout, clearTimeout, setInterval: () => 0, clearInterval() {}
   });

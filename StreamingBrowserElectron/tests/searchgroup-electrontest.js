@@ -38,7 +38,9 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false, webPreferences: { backgroundThrottling: false } });
   const root = path.join(__dirname, "..");
   const renderer = fs.readFileSync(path.join(root, "src/renderer/renderer.js"), "utf8").replace(/\r\n/g, "\n");
-  const code = [functionSource(renderer, "titelMitFundstelle"), functionSource(renderer, "searchResultCard")].join("\n");
+  const code = [functionSource(renderer, "titelMitFundstelle"), functionSource(renderer, "searchResultCard"),
+    "async " + functionSource(renderer, "renderProviderResults")].join("\n");
+  const grouping = fs.readFileSync(path.join(root, "shared/search-grouping.js"), "utf8");
   await win.loadURL("data:text/html,<main></main>");
   const result = await win.webContents.executeJavaScript(`(async () => {
     const opens = [], toasts = [];
@@ -60,6 +62,17 @@ app.whenReady().then(async () => {
     const renderHome = () => {};
     const posterHinzufuegenEffekt = () => {};
     const showToast = message => toasts.push(message);
+    ${grouping}
+    const searchGroupingModul = globalThis.ELFIX_SEARCH_GROUPING;
+    let activeSearchToken = 1;
+    const globalSearchGrid = document.createElement('div');
+    document.body.append(globalSearchGrid);
+    const copy = document.createElement('p'); copy.id = 'searchCopy'; document.body.append(copy);
+    const emptyText = text => Object.assign(document.createElement('p'), { textContent: text });
+    const fremdtitelHinweis = () => '';
+    const cloudflareHinweis = () => '';
+    const artwork = [];
+    const trefferbilderNachreichen = (...args) => artwork.push(args);
     ${code}
     const a = { provider: { providerId: 'a', providerName: 'AniWorld' }, result: { title: 'Demon <img src=x>', url: 'https://a/title', image: 'a.jpg' } };
     const b = { provider: { providerId: 'b', providerName: 'S.to' }, result: { title: 'Demon <img src=x>', url: 'https://b/title', image: 'b.jpg' } };
@@ -85,7 +98,46 @@ app.whenReady().then(async () => {
     const heart = card.querySelector('.result-fav');
     const pendingRace = heart.textContent === '♡' && !heart.classList.contains('is-active')
       && toasts.at(-1).includes(a.result.title);
-    return { initial, literal, switched, chipKeyboardDoesNotOpen, cardKeyboardOpensSelected, pendingRace };
+    let report, finish, fail, unsubscribed = 0;
+    api.onSearchProgress = callback => { report = callback; return () => { unsubscribed += 1; }; };
+    api.searchAll = (_query, requestId) => new Promise((resolve, reject) => { finish = resolve; fail = reject; });
+    const loading = document.createElement('div'); loading.className = 'search-loading'; globalSearchGrid.append(loading);
+    const search = renderProviderResults('demon', 1);
+    const fast = { providerId: 'a', providerName: 'AniWorld', results: [a.result] };
+    report({ requestId: 0, query: 'demon', results: [fast] });
+    const staleProgressIgnored = globalSearchGrid.querySelectorAll('.provider-result').length === 0;
+    report({ requestId: 1, query: 'demon', results: [fast] });
+    const firstCard = globalSearchGrid.querySelector('.provider-result');
+    const usableBeforeCompletion = !!firstCard && loading.isConnected;
+    firstCard.click(); await Promise.resolve(); await Promise.resolve();
+    const partialClickable = opens.at(-1).providerId === 'a';
+    const late = { providerId: 'b', providerName: 'S.to', results: [b.result] };
+    report({ requestId: 1, query: 'demon', results: [late, fast] });
+    const merged = firstCard.querySelectorAll('.result-provider-choice');
+    const lateSourcesMerged = globalSearchGrid.querySelectorAll('.provider-result').length === 1
+      && globalSearchGrid.querySelector('.provider-result') === firstCard && merged.length === 2
+      && firstCard.dataset.resultUrl === a.result.url;
+    merged[0].click();
+    merged[0].focus();
+    finish([late, fast]); await search;
+    const finalPreservesChoice = globalSearchGrid.querySelector('.provider-result') === firstCard
+      && firstCard.dataset.resultUrl === b.result.url && !loading.isConnected && unsubscribed === 1 && artwork.length === 1;
+    const keyboardFocusPreserved = document.activeElement === merged[0];
+    globalSearchGrid.replaceChildren();
+    activeSearchToken = 2;
+    const cancelled = renderProviderResults('demon', 2);
+    activeSearchToken = 3;
+    report({ requestId: 2, query: 'demon', results: [fast] }); finish([fast]); await cancelled;
+    const navigationIgnoresProgress = globalSearchGrid.children.length === 0 && unsubscribed === 2;
+    activeSearchToken = 4;
+    const failed = renderProviderResults('demon', 4);
+    report({ requestId: 4, query: 'demon', results: [fast] });
+    fail(new Error('IPC getrennt')); await failed;
+    const failureKeepsPartialResults = globalSearchGrid.querySelectorAll('.provider-result').length === 1
+      && copy.textContent.includes('nicht vollständig') && unsubscribed === 3;
+    return { initial, literal, switched, chipKeyboardDoesNotOpen, cardKeyboardOpensSelected, pendingRace,
+      staleProgressIgnored, usableBeforeCompletion, partialClickable, lateSourcesMerged, finalPreservesChoice,
+      keyboardFocusPreserved, navigationIgnoresProgress, failureKeepsPartialResults };
   })()`);
   for (const [name, ok] of Object.entries(result)) console.log(`${ok ? "OK" : "FAIL"}  ${name}`);
   win.destroy();

@@ -77,6 +77,19 @@ function mitgliederListe(roh) {
   return Array.isArray(roh) ? roh.map(flacheDaten).filter(Boolean).slice(0, 1000) : [];
 }
 
+function vorbereitungsStand(roh) {
+  if (!datenObjekt(roh) || typeof roh.syncId !== "string") return null;
+  return {
+    syncId: nachrichtenText(roh.syncId, 80), reason: nachrichtenText(roh.reason, 40),
+    phase: nachrichtenText(roh.phase, 20), recovery: roh.recovery === true,
+    currentMemberId: nachrichtenText(roh.currentMemberId, 64),
+    members: (Array.isArray(roh.members) ? roh.members : []).slice(0, 1000)
+      .filter(datenObjekt).map((m) => ({ id: nachrichtenText(m.id, 64),
+        name: nachrichtenText(m.name, 40), state: nachrichtenText(m.state, 40),
+        detail: nachrichtenText(m.detail, 200) })).filter((m) => m.id)
+  };
+}
+
 function peerListe(roh) {
   return Array.isArray(roh) ? roh.filter((wert) => typeof wert === "string").slice(0, 1000) : [];
 }
@@ -326,6 +339,7 @@ class Watchparty {
       this.versuche = 0;
       this.senden({
         type: "join",
+        capabilities: ["playback-recovery-v1"],
         room: this.raum,
         name: this.name,
         // Der gespeicherte Wurzelnachweis verlaesst das Geraet nie. Jede
@@ -636,7 +650,7 @@ class Watchparty {
         return;
       }
       if (!this.identitaetBestaetigt) return;
-      if ((nachricht?.type === "syncprepare" || nachricht?.type === "syncstart") && nachricht.key) {
+      if (["syncprepare", "syncstart", "syncrecover", "syncfailed"].includes(nachricht?.type) && nachricht.key) {
         const steuerung = flacheDaten(nachricht);
         if (!steuerung || typeof steuerung.key !== "string") return;
         this.aufSteuerung({ ...steuerung, action: nachricht.type });
@@ -661,6 +675,7 @@ class Watchparty {
           key: nachrichtenText(nachricht.key, 300),
           tempo: nachrichtenZahl(nachricht.tempo, 1) > 0 ? nachrichtenZahl(nachricht.tempo, 1) : 1,
           members: mitgliederListe(nachricht.members),
+          preparation: vorbereitungsStand(nachricht.preparation),
           pausedBy: nachrichtenText(nachricht.pausedBy, 40),
           lastAction: flacheDaten(nachricht.lastAction)
         });
@@ -846,6 +861,22 @@ class Watchparty {
   // `ok = false` sagt der Runde ab: dieses Geraet bekommt die Folge nicht auf.
   bereitZumStart(key, syncId, ok = true) {
     this.senden({ type: "syncready", key, syncId: String(syncId || ""), ok: ok !== false });
+  }
+
+  vorbereitungsStatus(key, syncId, state, detail = "") {
+    if (!this.aktiv || !this.istBeigetreten(key)) return false;
+    return this.senden({ type: "syncstatus", key, syncId: String(syncId || ""),
+      state: String(state || "").slice(0, 40), detail: String(detail || "").slice(0, 200) });
+  }
+
+  wiederherstellungVerlassen(key, syncId) {
+    if (!this.aktiv || !this.istBeigetreten(key)) return false;
+    return this.senden({ type: "syncrecoverleft", key, syncId: String(syncId || "") });
+  }
+
+  wiederherstellungAbbrechen(key, syncId) {
+    if (!this.aktiv || !this.istBeigetreten(key)) return false;
+    return this.senden({ type: "synccancel", key, syncId: String(syncId || "") });
   }
 
   // Den Host an ein anderes Geraet weitergeben.

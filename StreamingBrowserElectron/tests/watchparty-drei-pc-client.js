@@ -2,9 +2,46 @@
 
 // One complete desktop app per child process. Only provider/hoster responses
 // are fixtures; Main, renderer, preload, player and relay traffic are real.
-const { app, BrowserWindow, webContents, net, contentTracing } = require("electron");
+const { app, BrowserWindow, webContents, net, contentTracing, ipcMain } = require("electron");
 const fs = require("node:fs"), path = require("node:path"), http = require("node:http");
 const config = JSON.parse(process.env.ELFIX_THREE_PC_CONFIG);
+// Passive observations of the real transport and real renderer IPC. The
+// recovery fixture changes only hoster responses, never readiness or clocks.
+const protocolEvents = [], playerEvents = [];
+let sourceFault = null;
+const record = (list, value) => { const entry = { at: Date.now(), ...value }; list.push(entry); if (list.length > 2000) list.shift(); return entry; };
+if (config.observeRecovery) {
+  const NativeWebSocket = globalThis.WebSocket;
+  globalThis.WebSocket = class ObservedWebSocket extends NativeWebSocket {
+    constructor(...args) {
+      super(...args);
+      this.addEventListener("message", event => {
+        try {
+          const message = JSON.parse(String(event.data));
+          record(protocolEvents, { direction: "received", message });
+          if (message.type === "syncrecover" && sourceFault?.releaseOnRecovery) {
+            sourceFault.active = false;
+          }
+        } catch { /* Non-JSON messages are irrelevant to the fixture. */ }
+      });
+    }
+    send(raw) {
+      try { record(protocolEvents, { direction: "sent", message: JSON.parse(String(raw)) }); } catch { /* See above. */ }
+      return super.send(raw);
+    }
+  };
+  for (const channel of ["spieler:neustart-bereit", "spieler:sync-bereit"]) {
+    ipcMain.on(channel, (event, syncId) => {
+      const observation = record(playerEvents, { channel, syncId, senderId: event.sender.id, senderUrl: event.sender.getURL() });
+      if (channel === "spieler:neustart-bereit") {
+        event.sender.executeJavaScript(`({auftragId:auftrag?.id || null,src:bild.getAttribute('src'),
+          currentSrc:bild.currentSrc,paused:bild.paused,inParty:inRunde})`)
+          .then(state => { observation.state = state; })
+          .catch(error => { observation.error = error.message; });
+      }
+    });
+  }
+}
 app.setPath("appData", config.profile);
 app.setPath("userData", path.join(config.profile, "browser"));
 app.setAppPath(path.resolve(__dirname, ".."));
@@ -89,8 +126,16 @@ app.on("session-created", ses => {
     if (!["s.to", "serienstream.to", "serienstream.cx", "186.2.175.5"].includes(url.hostname)) return new Response("Fixture: unavailable", { status: 404 });
     if (url.pathname === "/r") {
       await mediaReady;
+      const episode = Number(url.searchParams.get("t"));
+      if (sourceFault?.active && sourceFault.episode === episode) {
+        sourceFault.failures++;
+        if (sourceFault.mode === "first-error") sourceFault.active = false;
+        return new Response("<!doctype html><title>Fixture source unavailable</title><p>No source</p>", {
+          status: 503, headers: { "content-type": "text/html", "cache-control": "no-store" }
+        });
+      }
       return new Response(`<video src="http://localhost:${mediaServer.address().port}/fixture-${url.searchParams.get("t")}.mp4"></video>`,
-        { headers: { "content-type": "text/html" } });
+        { headers: { "content-type": "text/html", "cache-control": "no-store" } });
     }
     // Model the same title opening under each PC's configured provider address.
     if (url.origin !== config.origin || url.pathname.startsWith("/serie/stream/")) {
@@ -128,10 +173,15 @@ app.on("web-contents-created", (_event, contents) => {
   });
 });
 app.on("browser-window-created", (_event, window) => {
+  if (config.hidden) {
+    window.hide();
+    window.show = window.showInactive = () => {};
+    window.setFullScreen = () => {};
+  }
   window.setOpacity(process.env.CI ? 1 : 0);
   // Keep the visible-window lifecycle without foregrounding test windows.
   // CI paints normally; local runs remain transparent on the user's desktop.
-  window.show = () => window.showInactive();
+  if (!config.hidden) window.show = () => window.showInactive();
   window.webContents.setAudioMuted(true);
   window.webContents.on("did-finish-load", () => {
     if (!window.webContents.getURL().endsWith("/index.html")) return;
@@ -145,12 +195,17 @@ process.on("message", async message => {
     let result;
     if (message.action === "quit") { app.exit(0); return; }
     if (message.action === "hold") { heldEpisode = message.episode; result = true; }
+    else if (message.action === "source-fault") {
+      sourceFault = { episode: message.episode, mode: message.mode || "never-source", active: true,
+        releaseOnRecovery: message.releaseOnRecovery !== false, failures: 0 }; result = true;
+    }
     else if (message.action === "release") {
       heldEpisode = 0;
       for (const release of heldResponses) release();
       heldResponses.clear(); result = true;
     }
-    else if (message.action === "fixture-status") result = { heldEpisode, pendingResponses: heldResponses.size };
+    else if (message.action === "fixture-status") result = { heldEpisode, pendingResponses: heldResponses.size, sourceFault,
+      fixtureRequests, mediaRequests, protocolEvents, playerEvents };
     else if (message.action === "diagnostic-trace") {
       if (traceReady) {
         await traceReady;
@@ -162,7 +217,7 @@ process.on("message", async message => {
       mediaRequests, mediaAddress: mediaServer.address(), metrics: app.getAppMetrics(),
       windows: BrowserWindow.getAllWindows().map(window => ({ visible: window.isVisible(),
         minimized: window.isMinimized(), opacity: window.getOpacity(), bounds: window.getBounds() })),
-      heldEpisode, pendingResponses: heldResponses.size,
+      heldEpisode, pendingResponses: heldResponses.size, sourceFault, protocolEvents, playerEvents,
       contents: webContents.getAllWebContents().map(wc => ({ id: wc.id,
         pid: wc.getOSProcessId(), url: wc.getURL(), title: wc.getTitle(), loading: wc.isLoading() }))
     };

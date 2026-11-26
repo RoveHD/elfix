@@ -41,6 +41,73 @@ function istLaufende(eintrag, jetzt) {
 }
 
 /**
+ * Absolute Folgennummern fuer die Playerliste.
+ *
+ * Explizite Nummern des Anbieters haben Vorrang. Ein Offset wird nur aus
+ * echten, lueckenlosen Providerlisten jeder vorherigen Staffel gebildet.
+ * `lesenStaffel` ist absichtlich injizierbar: der Aufrufer verwendet seine
+ * stille Folgen-Werkbank und die Tests koennen Netz und Cache ersetzen.
+ */
+async function gesamtFolgenErmitteln(stand, jetzt, lesenStaffel, gueltig = () => true) {
+  if (!stand || !jetzt || typeof lesenStaffel !== "function" || !gueltig()) return stand;
+  const staffel = Number(jetzt.season);
+  if (!Number.isSafeInteger(staffel) || staffel <= 1) return stand;
+
+  const folgen = geordnet(stand.folgen);
+  const explizit = (eintrag) => Number.isSafeInteger(Number(eintrag.gesamtFolge))
+    && Number(eintrag.gesamtFolge) > 0 ? Number(eintrag.gesamtFolge) : null;
+  // Schon absolute Provider-URLs/Titelnummern nicht ein zweites Mal offsetten.
+  const aktuelleStaffel = folgen.filter((eintrag) => Number(eintrag.staffel) === staffel);
+  if (aktuelleStaffel.length && aktuelleStaffel.every((eintrag) => explizit(eintrag) !== null)) {
+    return { ...stand, folgen: folgen.map((eintrag) => ({ ...eintrag, gesamtFolge: explizit(eintrag) })) };
+  }
+  const nummern = aktuelleStaffel.map((eintrag) => Number(eintrag.folge))
+    .filter((nummer) => Number.isSafeInteger(nummer) && nummer > 0);
+  if (nummern.length && Math.min(...nummern) !== 1) {
+    return { ...stand, folgen: folgen.map((eintrag) => ({ ...eintrag, gesamtFolge: explizit(eintrag) })) };
+  }
+
+  const staffeln = (Array.isArray(stand.staffeln) ? stand.staffeln : [])
+    .filter((eintrag) => Number.isSafeInteger(Number(eintrag?.staffel))
+      && Number(eintrag.staffel) > 0 && Number(eintrag.staffel) < staffel)
+    .sort((a, b) => Number(a.staffel) - Number(b.staffel));
+  if (staffeln.length !== staffel - 1
+    || staffeln.some((eintrag, index) => Number(eintrag.staffel) !== index + 1)) {
+    return { ...stand, folgen: folgen.map((eintrag) => ({ ...eintrag, gesamtFolge: explizit(eintrag) })) };
+  }
+
+  let offset = 0;
+  for (const eintrag of staffeln) {
+    if (!gueltig()) return stand;
+    const vorher = await lesenStaffel(eintrag);
+    if (!gueltig()) return stand;
+    const liste = geordnet(vorher?.folgen);
+    if (!Array.isArray(vorher?.folgen) || liste.length !== vorher.folgen.length
+      || Number(vorher?.offeneStaffel) !== Number(eintrag.staffel) || !liste.length
+      || liste.some((folge, index) => Number(folge.staffel) !== Number(eintrag.staffel)
+        || Number(folge.folge) !== index + 1 || !folge.url)
+      || new Set(liste.map((folge) => Number(folge.folge))).size !== liste.length) {
+      return { ...stand, folgen: folgen.map((folge) => ({ ...folge, gesamtFolge: explizit(folge) })) };
+    }
+    // Auch gesperrte Zeilen belegen einen Episodenslot, etwa eine
+    // Doppelfolge, deren Link der Anbieter nicht freigibt.
+    offset += liste.length;
+  }
+
+  return {
+    ...stand,
+    folgen: folgen.map((eintrag) => {
+      const eigene = explizit(eintrag);
+      if (eigene !== null) return { ...eintrag, gesamtFolge: eigene };
+      if (Number(eintrag.staffel) !== staffel || !Number.isSafeInteger(Number(eintrag.folge))) {
+        return { ...eintrag, gesamtFolge: null };
+      }
+      return { ...eintrag, gesamtFolge: offset + Number(eintrag.folge) };
+    })
+  };
+}
+
+/**
  * Die Folge nach dieser.
  *
  * Genommen wird der naechste *spielbare* Eintrag der geordneten Liste - damit
@@ -119,6 +186,8 @@ function fuerPlayer(stand, jetzt) {
     folgen: geordnet(stand.folgen).map((eintrag) => ({
       staffel: Number(eintrag.staffel) || 0,
       folge: Number(eintrag.folge) || 0,
+      gesamtFolge: Number.isSafeInteger(Number(eintrag.gesamtFolge))
+        && Number(eintrag.gesamtFolge) > 0 ? Number(eintrag.gesamtFolge) : null,
       url: String(eintrag.url || ""),
       titel: String(eintrag.titel || ""),
       // Die Einordnung kommt spaeter von AnimeFillerList. Sie ist reine
@@ -131,4 +200,4 @@ function fuerPlayer(stand, jetzt) {
   };
 }
 
-module.exports = { naechste, beschriftung, fuerPlayer, geordnet, spielbar, istLaufende };
+module.exports = { naechste, beschriftung, fuerPlayer, geordnet, spielbar, istLaufende, gesamtFolgenErmitteln };

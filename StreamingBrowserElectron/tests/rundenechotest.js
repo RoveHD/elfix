@@ -24,6 +24,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { performance } = require("node:perf_hooks");
 
 const WURZEL = path.join(__dirname, "..");
 const SPIELER = fs.readFileSync(path.join(WURZEL, "src/renderer/spieler.js"), "utf8");
@@ -114,7 +115,7 @@ function spielerKontext(bild) {
       ElfixSkipsegmente: require("../src/skipsegmente"),
       addEventListener() {}
     },
-    navigator: {}, console: still, Date, Event, Promise,
+    navigator: {}, console: still, Date, Event, Promise, performance,
     document: { getElementById: element, createElement: () => element(Symbol()), addEventListener() {} },
     setTimeout, clearTimeout, setInterval: () => 0, clearInterval() {}
   });

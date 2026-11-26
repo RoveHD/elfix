@@ -103,6 +103,7 @@ const wiederverwendung = vm.createContext({
   mainWindow: { isDestroyed: () => false },
   spielerLaufSetzen: () => taten.push("lauf-setzen"),
   spielerAuftrag: () => ({ id: 2 }),
+  spielerVorbereitungSenden() {}, spielerVorbereitungQuelleBereit() {},
   sendSpielerChatStatus: () => taten.push("chat-status"),
   direktVollbildAnwenden: () => {},
   // Mit dem neuen Auftrag erfaehrt auch die Oberflaeche, was offen ist.

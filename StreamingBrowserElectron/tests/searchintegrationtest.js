@@ -99,6 +99,33 @@ async function startServer() {
     const run = () => coordinator.request({ key: "same-provider-snapshot", owner: "renderer", execute: signal => context.searchAllProviders("demo", signal, [htmlProvider]) });
     await run(); await run();
     check("identische erfolgreiche Hauptprozess-Suche wird einmal ausgefuehrt", server.counts().html === before + 1);
+
+    // Keine geratenen Wartezeiten: der langsame Anbieter wird explizit erst
+    // nach der ersten nutzbaren Antwort freigegeben. Promise.all allein haette
+    // bis dahin exakt null Treffer an den Renderer geliefert.
+    const originalProvider = context.searchProvider;
+    let releaseSlow, firstProgress;
+    const slowGate = new Promise(resolve => { releaseSlow = resolve; });
+    const first = new Promise(resolve => { firstProgress = resolve; });
+    let completed = false;
+    const snapshots = [];
+    context.searchProvider = async provider => {
+      if (provider.id === "slow") await slowGate;
+      return { providerId: provider.id, results: [{ title: provider.id, url: `${server.base}/${provider.id}` }] };
+    };
+    const selected = [{ ...htmlProvider, id: "slow" }, { ...htmlProvider, id: "fast" }];
+    const incremental = context.searchAllProviders("demo", new AbortController().signal, selected, 2000, snapshot => {
+      snapshots.push(snapshot);
+      firstProgress(snapshot);
+    }).then(results => { completed = true; return results; });
+    const early = await innerhalb(first, "fertiger Anbieter wartet weiterhin auf langsamen Anbieter");
+    check("erster Treffer erscheint bei weiterhin blockiertem zweitem Anbieter", !completed && early.length === 1 && early[0].providerId === "fast");
+    releaseSlow();
+    const final = await incremental;
+    check("alle Provider bleiben im Endergebnis und behalten ihre Auswahlreihenfolge",
+      final.map(provider => provider.providerId).join(",") === "slow,fast"
+      && snapshots.at(-1).map(provider => provider.providerId).join(",") === "slow,fast");
+    context.searchProvider = originalProvider;
   } finally { await server.close(); }
   console.log(`${checks.filter(Boolean).length}/${checks.length} bestanden`);
   process.exit(checks.every(Boolean) ? 0 : 1);

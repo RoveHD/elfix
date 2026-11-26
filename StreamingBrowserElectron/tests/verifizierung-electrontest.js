@@ -69,7 +69,10 @@ app.whenReady().then(async () => {
     assert.ok(start >= 0, name);
     return main.slice(start, main.indexOf("\n}", start) + 2);
   };
+  const ladeStatus = [];
   const c = vm.createContext({ mainWindow: fenster, spielerView: player, verifizierungstor,
+    spielerLauf: { providerId: "sto" }, spielerLadeSchranke: { syncId: "probe" },
+    spielerVorbereitungMelden: state => ladeStatus.push(state),
     anbieterSeitenAnsicht: { offen: false },
     menschentorFenster: null, MENSCHENTOR_FRIST_MS: 4000, VIEW_BACKGROUND_COLOR: "#070a10", setTimeout,
     sendToast: () => {}, spielerLageSetzen: () => {}, torKlickZeit: new Map(), console,
@@ -96,6 +99,7 @@ app.whenReady().then(async () => {
   }
   await js("document.getElementById('bestaetigen').click()");
   assert.equal(await fertig, true);
+  assert.deepEqual(ladeStatus, ["confirmation-required", "source-search"], "Die Runde kennt Bestaetigung und anschliessende Quellensuche");
   assert.equal(await js("window.videoBereit"), true);
   assert.equal((await js(verifizierungstor.zustandScript())).offen, false, "verstecktes Rest-Widget ist kein offenes Tor");
   assert.equal(await js("document.getElementById('__elfixVerifizierungStil') === null"), true);
@@ -116,6 +120,7 @@ app.whenReady().then(async () => {
   assert.equal(beendet, false, "Verschwinden ohne Token ist keine Bestätigung");
   stop.abort();
   assert.equal(await abgebrochen, false);
+  assert.equal(ladeStatus.at(-1), "confirmation-required", "Ein abgebrochener Auftrag meldet keine spaete Freigabe");
   assert.equal(fenster.contentView.children.includes(view), false);
   assert.equal(await js("document.getElementById('__elfixVerifizierungStil') === null"), true);
   assert.equal(await js("window.klicks"), 0);

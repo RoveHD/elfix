@@ -99,7 +99,7 @@ pruefe("Der Weg zur Anbieterseite ist nur ohne gefundene Quelle sichtbar",
     && /hosterSeiteBedienung\.hidden = Boolean\(auftrag\.adresse\)/.test(spielerSkript),
   "bei vorhandener Quelle bleibt der Player im Direktbetrieb");
 pruefe("Im Fehlerfall fuehrt der Knopf in die Folgenliste",
-  /zurueckZumHoster.*\n?.*addEventListener[\s\S]{0,120}folgenZeigen\(\)/.test(spielerSkript),
+  /getElementById\("zurueckZumHoster"\)\.addEventListener\("click", \(\) => \{[\s\S]{0,240}folgenZeigen\(\);/.test(spielerSkript),
   "dort steht auch die Hosterwahl");
 pruefe("Ist der Player zu, kommt die eigene Oberflaeche",
   haupt.includes('if (direktModus()) direktZurueckZurOberflaeche("")'),

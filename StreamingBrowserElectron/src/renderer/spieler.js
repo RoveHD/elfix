@@ -429,6 +429,12 @@ const anzeigeDauer = document.getElementById("dauer");
 const puffer = document.getElementById("puffer");
 const fehlerKasten = document.getElementById("fehler");
 const fehlerText = document.getElementById("fehlerText");
+const vorbereitungKasten = document.getElementById("vorbereitung");
+const vorbereitungTitel = document.getElementById("vorbereitungTitel");
+const vorbereitungText = document.getElementById("vorbereitungText");
+const vorbereitungListe = document.getElementById("vorbereitungListe");
+const vorbereitungAbbrechen = document.getElementById("vorbereitungAbbrechen");
+const vorbereitungSchliessen = document.getElementById("vorbereitungSchliessen");
 const folgenPanel = document.getElementById("folgenPanel");
 const folgenListe = document.getElementById("folgenListe");
 const folgenLeer = document.getElementById("folgenLeer");
@@ -720,6 +726,7 @@ let ausRundeBis = 0;
 /** Die gelesene Staffel- und Folgenliste. */
 let folgenStand = null;
 let folgenFassung = 0;
+let folgenLeseFassung = 0;
 let queueAktiv = false;
 /**
  * Uebernimmt die Warteschlange des Raums das Ende dieser Folge?
@@ -770,6 +777,9 @@ let rundeWarten = false;
 let rundeQuellenWarten = false;
 /** Eine syncprepare-Nachricht kann vor loadedmetadata eintreffen. */
 let rundenVorbereitung = null;
+let watchpartyVorbereitung = null;
+let resetPauseEreignisAusstehend = false;
+let resetWartetAufAuftrag = false;
 
 /* ------------------------------------------------------------- Kleinigkeiten */
 
@@ -785,15 +795,18 @@ function zeit(sekunden) {
 }
 
 function pufferZeigen(an) {
-  puffer.hidden = !an || !fehlerKasten.hidden;
+  puffer.hidden = !an || !fehlerKasten.hidden || watchpartyVorbereitung?.phase === "failed";
   spielenZeichnen();
 }
 
 function rundeWartenZeigen() {
   const hinweis = document.getElementById("warteAufAlle");
   const quelleFehlt = Boolean(auftrag?.laden && !auftrag.adresse);
-  hinweis.hidden = !fehlerKasten.hidden || (!rundeWarten && !quelleFehlt);
-  hinweis.textContent = quelleFehlt ? "Quelle wird gesucht …" : "Warten auf alle …";
+  hinweis.hidden = !fehlerKasten.hidden || !vorbereitungKasten.hidden
+    || (!rundeWarten && !quelleFehlt);
+  hinweis.textContent = quelleFehlt ? "Quelle wird gesucht …"
+    : watchpartyVorbereitung?.phase === "ready" ? "Der gemeinsame Start wird abgestimmt …"
+      : "Warten auf alle …";
 }
 
 /**
@@ -826,7 +839,7 @@ function spielenZeichnen() {
     knopf.setAttribute("aria-label", beschreibung);
     knopf.setAttribute("aria-busy", String(startAusstehend));
   }
-  knopfMitte.hidden = !puffer.hidden || !fehlerKasten.hidden;
+  knopfMitte.hidden = !puffer.hidden || !fehlerKasten.hidden || !vorbereitungKasten.hidden || rundeWarten;
 }
 
 /**
@@ -840,9 +853,167 @@ function spielenZeichnen() {
 function aufgeben(text, grund) {
   fehlerText.textContent = String(text || "Die Quelle antwortet nicht.");
   fehlerKasten.hidden = false;
+  vorbereitungZeigen(watchpartyVorbereitung);
   pufferZeigen(false);
   schichtenZeigen();
-  bruecke.fehler(`${grund}: ${text}`);
+  bruecke.fehler(`${grund}: ${text}`, auftrag?.id);
+}
+
+const vorbereitungStatus = {
+  "source-search": "sucht eine Quelle",
+  "confirmation-required": "benötigt eine Bestätigung",
+  "video-loading": "lädt das Video",
+  ready: "bereit",
+  error: "gescheitert",
+  left: "hat die Runde verlassen"
+};
+
+const vorbereitungFehler = {
+  "recovery-failed": "Die Wiederverbindung ist fehlgeschlagen. Du kannst später erneut beitreten.",
+  "episode-change": "Der gemeinsame Folgenwechsel konnte nicht vorbereitet werden. Bitte starte ihn erneut.",
+  "sync-timeout": "Die Teilnehmer wurden nicht rechtzeitig bereit. Prüfe Verbindung und Quelle und versuche es erneut."
+};
+let vorbereitungVerstecktFuer = "";
+
+function vorbereitungZeigen(wert) {
+  watchpartyVorbereitung = wert && typeof wert === "object" ? wert : null;
+  const status = watchpartyVorbereitung;
+  const key = status ? `${String(status.syncId ?? "")}:${String(status.phase ?? "")}` : "";
+  if (!status) vorbereitungVerstecktFuer = "";
+  const localMember = status?.myId == null ? null
+    : (Array.isArray(status.members) ? status.members.find(person => String(person?.id ?? "") === String(status.myId)) : null);
+  const eigenerFehler = status?.phase === "ready" && localMember?.state === "error";
+  const darstellbar = status && (status.phase !== "ready" || eigenerFehler);
+  const phaseAktiv = ["preparing", "leaving", "rejoining"].includes(status?.phase);
+  const terminalPhase = status && !phaseAktiv && status.phase !== "failed" && status.phase !== "ready";
+  const schliessbar = status && (status.phase === "failed" || status.phase === "cancelled"
+    || terminalPhase || eigenerFehler);
+  vorbereitungKasten.hidden = !darstellbar || !fehlerKasten.hidden || key === vorbereitungVerstecktFuer;
+  vorbereitungListe.replaceChildren();
+  vorbereitungAbbrechen.hidden = !(status?.recovery === true && phaseAktiv);
+  vorbereitungSchliessen.hidden = !schliessbar;
+  vorbereitungAbbrechen.dataset.syncId = status?.syncId == null ? "" : String(status.syncId);
+  if (!status) {
+    rundeWartenZeigen();
+    pufferZeigen(Boolean(rundeWarten || (auftrag?.laden && !auftrag.adresse)));
+    return;
+  }
+
+  const recovery = status.recovery === true;
+  if (status.phase === "failed") {
+    vorbereitungTitel.textContent = "Watchparty konnte nicht vorbereitet werden";
+    vorbereitungText.textContent = vorbereitungFehler[String(status.reason || "")]
+      || "Die Watchparty-Vorbereitung ist fehlgeschlagen. Bitte versuche es erneut.";
+  } else if (status.phase === "completed") {
+    vorbereitungTitel.textContent = "Watchparty ist bereit";
+    vorbereitungText.textContent = "Die Vorbereitung ist abgeschlossen.";
+  } else if (status.phase === "ready") {
+    vorbereitungTitel.textContent = eigenerFehler ? "Deine Wiedergabe braucht Aufmerksamkeit" : "Watchparty ist bereit";
+    vorbereitungText.textContent = eigenerFehler
+      ? String(localMember.detail || "Deine Quelle konnte nicht geladen werden.")
+      : "Deine Quelle ist bereit.";
+  } else if (status.phase === "cancelled") {
+    vorbereitungTitel.textContent = "Wiederverbindung beendet";
+    vorbereitungText.textContent = "Die Wiederverbindung wurde abgebrochen.";
+  } else if (terminalPhase) {
+    vorbereitungTitel.textContent = "Watchparty-Status beendet";
+    vorbereitungText.textContent = "Die Vorbereitung ist abgeschlossen.";
+  } else {
+    vorbereitungTitel.textContent = recovery ? "Watchparty wird neu verbunden" : "Watchparty wird vorbereitet";
+    vorbereitungText.textContent = recovery ? "Teilnehmer werden nacheinander wieder verbunden."
+      : status.phase === "leaving" ? "Die bisherige Verbindung wird beendet."
+        : "Die Teilnehmer laden ihre Quelle und stimmen sich ab.";
+  }
+  for (const person of Array.isArray(status.members) ? status.members : []) {
+    const zeile = document.createElement("li");
+    const name = document.createElement("strong");
+    name.textContent = String(person?.name || "Teilnehmer");
+    const zustand = person?.state === "left" && recovery
+      ? "wartet auf den erneuten Beitritt"
+      : vorbereitungStatus[person?.state] || "wartet";
+    zeile.append(name, document.createTextNode(` — ${zustand}`));
+    if (person?.detail) {
+      const detail = document.createElement("small");
+      detail.textContent = String(person.detail);
+      zeile.append(detail);
+    }
+    if (String(person?.id ?? "") === String(status.currentMemberId ?? "")) zeile.setAttribute("aria-current", "true");
+    vorbereitungListe.append(zeile);
+  }
+  rundeWartenZeigen();
+  pufferZeigen(phaseAktiv || (status.phase === "ready" && !eigenerFehler && rundeWarten));
+}
+
+vorbereitungAbbrechen.addEventListener("click", () => {
+  const syncId = vorbereitungAbbrechen.dataset.syncId;
+  if (syncId) bruecke.VorbereitungAbbrechen?.(syncId);
+});
+
+vorbereitungSchliessen.addEventListener("click", () => {
+  if (!watchpartyVorbereitung) return;
+  vorbereitungVerstecktFuer = `${String(watchpartyVorbereitung.syncId ?? "")}:${String(watchpartyVorbereitung.phase ?? "")}`;
+  vorbereitungKasten.hidden = true;
+  rundeWartenZeigen();
+  spielenZeichnen();
+});
+
+function rundeNeustarten(syncId) {
+  // Ungültig machen, was für die alte Quelle noch asynchron wartet.
+  ++startAuftrag;
+  ++quellenGeneration;
+  startAusstehend = false;
+  clearTimeout(startNotbremse);
+  wechselAnfrage = null;
+  skipGeneration++;
+  skipSegmente = [];
+  skipAnfrage = "";
+  skipAn = false;
+  skipLeisteZeichnen();
+  queueAktiv = false;
+  vorgeladen = false;
+  startGesetzt = false;
+  weiterVerworfen = false;
+  puffert = true;
+  gelaufen = 0;
+  vorigeStelle = 0;
+  marke = null;
+  naechsteSetzen(null);
+  weiterAbbrechen();
+  spulVorschauVerbergen();
+  hlsAnkerZuruecksetzen();
+  if (hls) {
+    try { hls.destroy(); } catch (_) {}
+    hls = null;
+  }
+  resetPauseEreignisAusstehend = !bild.paused;
+  bild.pause();
+  bild.removeAttribute("src");
+  bild.load();
+  inRunde = false;
+  rundenKontext = "";
+  binHost = false;
+  videoUpscaler?.setzeAktiv(false);
+  auftrag = null;
+  resetWartetAufAuftrag = true;
+  rundeWarten = true;
+  rundeQuellenWarten = false;
+  rundenVorbereitung = null;
+  pufferZeigen(true);
+  fehlerKasten.hidden = true;
+  vorbereitungZeigen(watchpartyVorbereitung);
+  document.getElementById("fsrBild").hidden = true;
+  document.getElementById("anime4kBild").hidden = true;
+  document.getElementById("rtxBild").hidden = true;
+  hosterSetzen([], "");
+  untertitelSetzen([]);
+  anzeigeStelle.textContent = "0:00";
+  anzeigeDauer.textContent = "0:00";
+  regler.value = "0";
+  regler.style.setProperty("--gespielt", "0%");
+  regler.style.setProperty("--geladen", "0%");
+  document.getElementById("hoster").textContent = "";
+  kopfTitelSetzen("Wiedergabe", "");
+  bruecke.neustartBereit?.(syncId);
 }
 
 /* ---------------------------------------------------------- Die Bedienung */
@@ -1086,6 +1257,10 @@ function ausRunde() {
  */
 function steuernAusRunde(befehl) {
   if (!befehl) return;
+  if (befehl.tun === "runde-neustart") {
+    rundeNeustarten(befehl.syncId);
+    return;
+  }
   if (befehl.tun === "runde") {
     if (befehl.auftragId !== auftrag?.id) return;
     const kontext = befehl.aktiv ? String(befehl.kontext || "") : "";
@@ -1673,16 +1848,18 @@ async function folgenZeigen() {
   folgenPanel.hidden = false;
   schichtenZeigen();
   if (folgenStand) return;
+  const leseFassung = ++folgenLeseFassung;
+  const fassung = folgenFassung;
   folgenListe.textContent = "";
   folgenLeer.hidden = false;
   folgenLeer.textContent = "Folgen werden gelesen …";
   const stand = await bruecke.folgen(false);
+  if (leseFassung !== folgenLeseFassung || fassung !== folgenFassung) return;
   if (!stand || !Array.isArray(stand.folgen) || !stand.folgen.length) {
     folgenLeer.textContent = "Die Folgenliste ließ sich nicht lesen.";
     return;
   }
   folgenStand = stand;
-  const fassung = ++folgenFassung;
   spoilerSchalterZeichnen(stand.spoilerRegel);
   const laufend = stand.folgen.find((eintrag) => eintrag.laeuft);
   offeneStaffel = laufend ? laufend.staffel : (stand.folgen[0]?.staffel || 0);
@@ -1699,6 +1876,8 @@ async function folgenZeigen() {
  * mit, die Reiterzeile bleibt also vollstaendig.
  */
 async function staffelOeffnen(staffel) {
+  const leseFassung = ++folgenLeseFassung;
+  const fassung = folgenFassung;
   offeneStaffel = staffel;
   if (folgenStand?.folgen?.some((eintrag) => eintrag.staffel === staffel)) {
     folgenZeichnen();
@@ -1714,6 +1893,7 @@ async function staffelOeffnen(staffel) {
   folgenLeer.textContent = staffel === 0 ? "Filme werden gelesen …" : `Staffel ${staffel} wird gelesen …`;
   folgenZeichnen();
   const stand = await bruecke.folgen(false, ziel.url);
+  if (leseFassung !== folgenLeseFassung || fassung !== folgenFassung) return;
   if (!stand || !Array.isArray(stand.folgen) || !stand.folgen.length) {
     folgenLeer.hidden = false;
     folgenLeer.textContent = staffel === 0 ? "Die Filme ließen sich nicht lesen." : `Staffel ${staffel} ließ sich nicht lesen.`;
@@ -1732,13 +1912,73 @@ async function staffelOeffnen(staffel) {
   };
   // Eine weitere Staffel gehoert noch zum selben Titel. Laufende Nachtraege
   // der anderen Staffeln duerfen deshalb nicht als veraltet gelten.
-  const fassung = folgenFassung;
   folgenZeichnen();
   fillerNachtragen(stand.fillerQuelle, fassung);
 }
 
-function folgenZeichnen() {
+// Ein Haken aendert Titel und Zeilenhoehen. Die oberste sichtbare Zeile bleibt
+// deshalb am selben Ort, auch wenn weiter oben ein Titel mehr Platz bekommt.
+function folgenPositionLesen() {
+  const oben = folgenListe.getBoundingClientRect().top;
+  const zeile = [...folgenListe.children].find(k => k.getBoundingClientRect().bottom > oben);
+  const fokus = document.activeElement;
+  return {
+    scrollTop: folgenListe.scrollTop,
+    anker: zeile?.dataset.folgeUrl,
+    abstand: zeile ? zeile.getBoundingClientRect().top - oben : 0,
+    fokusUrl: fokus?.closest?.(".zeile")?.dataset.folgeUrl,
+    fokusHaken: fokus?.classList.contains("hakenKnopf")
+  };
+}
+
+function folgenPositionSetzen(position) {
+  const zeilen = [...folgenListe.children];
+  folgenListe.scrollTop = position.scrollTop;
+  const anker = position.anker && zeilen.find(z => z.dataset.folgeUrl === position.anker);
+  if (anker) folgenListe.scrollTop += anker.getBoundingClientRect().top
+    - folgenListe.getBoundingClientRect().top - position.abstand;
+  const fokus = position.fokusUrl && zeilen.find(z => z.dataset.folgeUrl === position.fokusUrl);
+  fokus?.querySelector(position.fokusHaken ? ".hakenKnopf" : ".folge")?.focus({ preventScroll: true });
+}
+
+/** Spoiler-/Gesehen-Aenderungen aktualisieren nur die gerade offene Staffel. */
+async function folgenAktualisieren() {
+  if (folgenPanel.hidden) {
+    folgenStand = null;
+    ++folgenLeseFassung;
+    return;
+  }
+  if (!folgenStand) return folgenZeigen();
+  const leseFassung = ++folgenLeseFassung;
+  const fassung = folgenFassung;
+  const ziel = folgenStand.staffeln?.find(s => s.staffel === offeneStaffel)?.url;
+  const stand = await bruecke.folgen(false, ziel).catch(() => null);
+  if (leseFassung !== folgenLeseFassung || fassung !== folgenFassung || !stand?.folgen?.length) return;
+  // Nummern und Filler sind unveraenderliche Zusatzdaten. Beim Abhaken bleiben
+  // sie erhalten, waehrend Titel und Gesehen-Zustand frisch vom Hauptprozess kommen.
+  const vorher = new Map(folgenStand.folgen.map(e => [e.url, e]));
+  folgenStand = { ...stand, folgen: stand.folgen.map(e => ({ ...e,
+    gesamtFolge: e.gesamtFolge ?? vorher.get(e.url)?.gesamtFolge,
+    filler: e.filler ?? vorher.get(e.url)?.filler
+  })) };
+  spoilerSchalterZeichnen(stand.spoilerRegel);
+  folgenZeichnen(true);
+  fillerNachtragen(stand.fillerQuelle, fassung);
+}
+
+function folgenNummer(eintrag) {
+  if (eintrag.staffel === 0) return `Film ${eintrag.folge}`;
+  if (Number.isSafeInteger(eintrag.gesamtFolge) && eintrag.gesamtFolge > 0) {
+    return eintrag.staffel > 1
+      ? `Folge ${eintrag.gesamtFolge} · S${eintrag.staffel} F${eintrag.folge}`
+      : `Folge ${eintrag.gesamtFolge}`;
+  }
+  return eintrag.staffel > 1 ? `S${eintrag.staffel} · Folge ${eintrag.folge}` : `Folge ${eintrag.folge}`;
+}
+
+function folgenZeichnen(positionBehalten = false) {
   if (!folgenStand) return;
+  const position = positionBehalten ? folgenPositionLesen() : null;
   // Der Hinweis wird hier NICHT pauschal ausgeblendet: waehrend eine Staffel
   // nachgelesen wird, steht dort "Staffel 3 wird gelesen ...", und diese
   // Funktion laeuft dazwischen, um die Reiterzeile schon umzustellen.
@@ -1791,7 +2031,7 @@ function folgenZeichnen() {
     knopf.disabled = Boolean(eintrag.gesperrt) || !eintrag.url;
     const nummer = document.createElement("span");
     nummer.className = "nummer";
-    nummer.textContent = eintrag.staffel === 0 ? `Film ${eintrag.folge}` : `Folge ${eintrag.folge}`;
+    nummer.textContent = folgenNummer(eintrag);
     const titel = document.createElement("span");
     titel.className = "folgenText";
     titel.textContent = eintrag.titel || (eintrag.gesperrt ? "in einer anderen Folge enthalten" : "");
@@ -1816,6 +2056,7 @@ function folgenZeichnen() {
     zeile.appendChild(haken);
     folgenListe.appendChild(zeile);
   }
+  if (position) folgenPositionSetzen(position);
 }
 
 function fillerBadgeSetzen(zeile, filler) {
@@ -1834,19 +2075,23 @@ async function fillerNachtragen(staffelUrl, fassung) {
   const nachtrag = await bruecke.filler?.(staffelUrl).catch(() => null);
   if (fassung !== folgenFassung || !folgenStand || !Array.isArray(nachtrag?.folgen)) return;
   const nachFiller = new Map(nachtrag.folgen.filter((eintrag) => eintrag?.url)
-    .map((eintrag) => [eintrag.url, eintrag.filler]));
+    .map((eintrag) => [eintrag.url, eintrag]));
   folgenStand = { ...folgenStand, folgen: folgenStand.folgen.map((eintrag) => {
     if (!nachFiller.has(eintrag.url)) return eintrag;
-    const filler = nachFiller.get(eintrag.url);
-    return JSON.stringify(eintrag.filler || null) === JSON.stringify(filler || null)
-      ? eintrag : { ...eintrag, filler };
+    const { filler, gesamtFolge } = nachFiller.get(eintrag.url);
+    return { ...eintrag, filler, gesamtFolge: gesamtFolge ?? eintrag.gesamtFolge };
   }) };
   if (!folgenPanel.hidden) {
-    const scrollTop = folgenListe.scrollTop;
+    const position = folgenPositionLesen();
     const zeilen = new Map([...folgenListe.querySelectorAll(".zeile")]
       .map((zeile) => [zeile.dataset.folgeUrl, zeile]));
-    for (const [url, filler] of nachFiller) fillerBadgeSetzen(zeilen.get(url), filler);
-    folgenListe.scrollTop = scrollTop;
+    for (const eintrag of folgenStand.folgen) {
+      const zeile = zeilen.get(eintrag.url);
+      if (!zeile) continue;
+      fillerBadgeSetzen(zeile, eintrag.filler);
+      zeile.querySelector(".nummer").textContent = folgenNummer(eintrag);
+    }
+    folgenPositionSetzen(position);
   }
 }
 
@@ -2113,6 +2358,7 @@ function untertitelSetzen(spuren) {
  * Meldung sofort - das sind die Augenblicke, in denen der Stand zaehlt.
  */
 function standMelden(sofort = false) {
+  if (resetWartetAufAuftrag) return;
   const jetzt = Date.now();
   if (!sofort && jetzt - zuletztGemeldet < 5000) return;
   zuletztGemeldet = jetzt;
@@ -2302,6 +2548,7 @@ knopfHosterSeite.addEventListener("click", async () => {
 });
 document.getElementById("zurueckZumHoster").addEventListener("click", () => {
   fehlerKasten.hidden = true;
+  vorbereitungZeigen(watchpartyVorbereitung);
   spielenZeichnen();
   folgenZeigen();
 });
@@ -2469,6 +2716,7 @@ document.addEventListener("keydown", (ereignis) => {
 });
 
 bild.addEventListener("timeupdate", () => {
+  if (resetWartetAufAuftrag) return;
   const stelle = Number(bild.currentTime) || 0;
   const abstand = stelle - vorigeStelle;
   // Nur ein Schritt, der in normaler Geschwindigkeit vergangen sein kann,
@@ -2501,6 +2749,10 @@ bild.addEventListener("play", () => {
   schichtenZeigen();
 });
 bild.addEventListener("pause", () => {
+  if (resetPauseEreignisAusstehend) {
+    resetPauseEreignisAusstehend = false;
+    return;
+  }
   spielenZeichnen();
   standMelden(true);
   // Das Ende ist keine Pause, die man an die anderen meldet - sie kommen von
@@ -2858,6 +3110,7 @@ function starten(neuerAuftrag) {
   spulVorschau.quelle({});
   vorschauQuelle = "";
   auftrag = neuerAuftrag || {};
+  resetWartetAufAuftrag = false;
   // Genau der erste passende Ladeauftrag gehoert noch zur offenen Anfrage.
   // Eine weitere Auswahl oder eine fertige Quelle macht deren Antwort alt.
   if (wechselAnfrage) {
@@ -2997,15 +3250,7 @@ bruecke.aufSpoiler?.((wert) => {
   kopfTitelSetzen("", wert?.folgentitel);
   naechsteSetzen(wert?.naechste);
   spoilerSchalterZeichnen(wert?.regel);
-  // Welche Staffel gerade offen ist, gehoert dem Zuschauer und nicht dem
-  // Anlass der Meldung. Ohne diese Zeile sprang die Liste beim Abhaken einer
-  // fremden Staffel zurueck auf die laufende.
-  const offen = folgenStand ? offeneStaffel : null;
-  folgenStand = null;
-  if (folgenPanel.hidden) return;
-  folgenZeigen().then(() => {
-    if (offen !== null && offen !== offeneStaffel) staffelOeffnen(offen);
-  });
+  folgenAktualisieren();
 });
 for (const [feld, name] of [[spoilerEnabled, "enabled"], [spoilerRoomMinimum, "roomMinimum"],
   [spoilerShare, "shareWatchedWithRoom"]]) {
@@ -3033,6 +3278,7 @@ bruecke.aufSkipEinstellung?.((an) => {
   if (skipAn) skipNachladen();
 });
 bruecke.aufSteuern(steuernAusRunde);
+bruecke.aufVorbereitung?.(vorbereitungZeigen);
 // Das Tempo der Runde: gesetzt wird es hier, gemeldet wird nichts zurueck.
 bruecke.aufTempo((wert, host) => {
   binHost = Boolean(host);

@@ -863,6 +863,7 @@ function uebersichtSkript() {
     // Keep the English title separately for exact external episode matching.
     // It must not replace the visible German title or be joined into it.
     const titelAlternativen = new Map();
+    const absoluteNummern = new Map();
     const titel = (() => {
       const karte = new Map();
       const eintragen = (zelle, gehoert) => {
@@ -873,6 +874,16 @@ function uebersichtSkript() {
         const sauber = titelSauber((stark && stark.textContent)) || titelSauber(zelle.textContent);
         if (!sauber) return;
         const schluessel = gehoert.staffel + "x" + gehoert.folge;
+        // Die absolute Nummer ist eine explizite Anbieterangabe. Vor dem
+        // Saeubern des Titels sichern, damit sie unabhaengig von Fillerdaten
+        // an genau dieser Folge erhalten bleibt.
+        const ganzerText = String(zelle.textContent || "");
+        const eckigeKlammer = ganzerText.lastIndexOf(String.fromCharCode(91));
+        const absolute = eckigeKlammer < 0 ? null
+          : ganzerText.slice(eckigeKlammer + 1).match(new RegExp("^(?:episode|folge) *([0-9]+) *] *$", "i"));
+        if (absolute && Number.isSafeInteger(Number(absolute[1])) && Number(absolute[1]) > 0) {
+          absoluteNummern.set(schluessel, Number(absolute[1]));
+        }
         if (!karte.has(schluessel)) karte.set(schluessel, sauber);
         const alternativen = Array.from(zelle.querySelectorAll("strong, span"))
           .map(knoten => titelSauber(knoten.textContent)).filter(Boolean);
@@ -940,6 +951,7 @@ function uebersichtSkript() {
         folge: gefunden.folge,
         url: gefunden.url,
         titel: titel.get(schluessel) || "",
+        gesamtFolge: absoluteNummern.get(schluessel) || null,
         titelAlternativen: titelAlternativen.get(schluessel) || [],
         gesperrt: gesperrte.has(gefunden.folge)
       });

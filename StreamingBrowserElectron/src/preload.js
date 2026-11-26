@@ -24,7 +24,12 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   openProviderPage: (id) => ipcRenderer.invoke("provider:open-page", id),
   openProviderSearch: (id, query) => ipcRenderer.invoke("provider:search", id, query),
   openProviderUrl: (id, url) => ipcRenderer.invoke("provider:navigate", id, url),
-  searchAll: (query) => ipcRenderer.invoke("search:all", query),
+  searchAll: (query, requestId) => ipcRenderer.invoke("search:all", query, requestId),
+  onSearchProgress: (callback) => {
+    const handler = (_event, progress) => callback(progress);
+    ipcRenderer.on("search:progress", handler);
+    return () => ipcRenderer.removeListener("search:progress", handler);
+  },
   cancelSearch: () => ipcRenderer.invoke("search:cancel"),
   /** Vorschlaege beim Tippen - Titel, Art, Jahr und wo es zu sehen ist. */
   searchSuggestions: (frage) => ipcRenderer.invoke("search:vorschlaege", String(frage || "")),

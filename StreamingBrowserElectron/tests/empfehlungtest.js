@@ -547,5 +547,10 @@ const opt = (extra = {}) => ({ jetzt: JETZT, limit: 20, ...extra });
 }
 
 const fehler = pruefungen.filter((p) => !p).length;
-console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
-process.exit(fehler ? 1 : 0);
+require("./empfehlungsreaktionstest").pruefen().then(() => {
+  console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden, Reaktionspruefungen bestanden`);
+  process.exit(fehler ? 1 : 0);
+}).catch((fehler) => {
+  console.error(fehler);
+  process.exit(1);
+});

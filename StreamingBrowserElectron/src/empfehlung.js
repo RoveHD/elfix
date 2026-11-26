@@ -322,9 +322,14 @@ function profilBauen(verlauf, jetzt = Date.now()) {
 const GENRE_GEWICHT_MIN = 0.35;
 
 function genreGewichte(mengen) {
+  return schritteAbschliessen(genreGewichteSchritte(mengen));
+}
+
+function* genreGewichteSchritte(mengen) {
   const haeufigkeit = new Map();
   let gesamt = 0;
   for (const menge of mengen || []) {
+    yield;
     const eigen = new Set((menge || []).filter(Boolean));
     if (!eigen.size) continue;
     gesamt += 1;
@@ -337,6 +342,7 @@ function genreGewichte(mengen) {
   // ganz oben.
   const groesste = Math.log(gesamt + 1);
   for (const [key, anzahl] of haeufigkeit) {
+    yield;
     const roh = Math.log((gesamt + 1) / (anzahl + 0.5)) / groesste;
     gewichte.set(key, Math.max(GENRE_GEWICHT_MIN, Math.min(1, roh)));
   }
@@ -1638,8 +1644,13 @@ function welt(kandidat) {
 }
 
 function zusammenfuehren(kandidaten) {
+  return schritteAbschliessen(zusammenfuehrenSchritte(kandidaten));
+}
+
+function* zusammenfuehrenSchritte(kandidaten) {
   const nach = new Map();
   for (const kandidat of kandidaten || []) {
+    yield;
     if (!kandidat?.url || !kandidat?.title) continue;
     const zerlegt = titel.zerlegen(kandidat.baseTitle || kandidat.title);
     if (!zerlegt.klar) continue;
@@ -1711,6 +1722,10 @@ const WELT_BREMSE = 0.12;
 const WELT_MAX = 0.5;
 
 function vielfalt(bewertet, limit) {
+  return schritteAbschliessen(vielfaltSchritte(bewertet, limit));
+}
+
+function* vielfaltSchritte(bewertet, limit) {
   const ergebnis = [];
   const reihenZaehler = new Map();
   const anbieterZaehler = new Map();
@@ -1721,6 +1736,7 @@ function vielfalt(bewertet, limit) {
     let bester = -1;
     let besteWertung = -Infinity;
     for (let index = 0; index < rest.length; index += 1) {
+      if (index % 128 === 0) yield;
       const kandidat = rest[index];
       const reihe = kandidat.reiheKey || "";
       const ausReihe = reihe ? reihenZaehler.get(reihe) || 0 : 0;
@@ -1764,17 +1780,47 @@ function vielfalt(bewertet, limit) {
 //   ausschluss - Set von Werk-Schluesseln, die nie erscheinen duerfen
 //   debug      - true: jeder Kandidat traegt seine Teilwerte mit sich
 function empfehlen(kandidaten, profil, optionen = {}) {
+  return schritteAbschliessen(empfehlungsSchritte(kandidaten, profil, optionen));
+}
+
+// Derselbe Rechenweg fuer beide Wirte und die synchrone Diagnose. Kein
+// zweites Ranking und keine Serialisierung des Profils mit seinen Methoden.
+// Die Pause gibt eine echte Ereignisschleifen-Runde frei (ein aufgeloestes
+// Promise wuerde nur Microtasks abarbeiten und Eingaben weiter blockieren).
+function schritteAbschliessen(schritte) {
+  let schritt;
+  do { schritt = schritte.next(); } while (!schritt.done);
+  return schritt.value;
+}
+
+async function empfehlenAsync(kandidaten, profil, optionen = {}) {
+  const schritte = empfehlungsSchritte(kandidaten, profil, optionen);
+  const uhr = typeof performance !== "undefined" ? () => performance.now() : () => Date.now();
+  let beginn = uhr();
+  for (;;) {
+    const schritt = schritte.next();
+    if (schritt.done) return schritt.value;
+    if (uhr() - beginn < 8) continue;
+    await new Promise((weiter) => {
+      if (typeof setImmediate === "function") setImmediate(weiter);
+      else setTimeout(weiter, 0);
+    });
+    beginn = uhr();
+  }
+}
+
+function* empfehlungsSchritte(kandidaten, profil, optionen = {}) {
   const limit = optionen.limit || 24;
   const ausschluss = optionen.ausschluss || new Set();
-  const zusammen = zusammenfuehren(kandidaten);
+  const zusammen = yield* zusammenfuehrenSchritte(kandidaten);
   // Die Gewichte der Genres entstehen aus dem, was gerade zur Wahl steht:
   // je seltener ein Genre im Angebot, desto mehr sagt eine Uebereinstimmung.
   // Der Verlauf zaehlt mit, sonst faellt ein Tag durch, den nur der Nutzer
   // hat.
-  const gewichte = optionen.gewichte || genreGewichte([
+  const gewichte = optionen.gewichte || (yield* genreGewichteSchritte([
     ...zusammen.map((kandidat) => kandidat.genres),
     ...profil.eintraege.map((eintrag) => eintrag.genres)
-  ]);
+  ]));
   // Wie viele verschiedene Seiten verlinken ueberhaupt etwas? Daran misst
   // sich, ob eine Verlinkung etwas bedeutet: Filmo haengt an jede Seite
   // denselben Werbeblock, und wer ueberall steht, sagt ueber keinen einzelnen
@@ -1786,14 +1832,15 @@ function empfehlen(kandidaten, profil, optionen = {}) {
   // zweiten Film, "marvel cinematic universe" an einem Dutzend. Ohne diese
   // Gewichtung waeren beide gleich viel wert - und dann verbindet ein
   // Allerweltsschlagwort zwei Titel genauso stark wie ein Universum.
-  const externGewichte = optionen.externGewichte || genreGewichte([
+  const externGewichte = optionen.externGewichte || (yield* genreGewichteSchritte([
     ...zusammen.map((kandidat) => kandidat.externKeys || []),
     ...profil.eintraege.map((eintrag) => eintrag.externKeys || [])
-  ]);
+  ]));
   const laufOptionen = { ...optionen, gewichte, externGewichte, seedSeiten: seedSeiten.size };
   const bewertet = [];
 
   for (const kandidat of zusammen) {
+    yield;
     if (ausschluss.has(kandidat.werkKey)) continue;
     const { m, gruende, reihe, belege } = merkmale(kandidat, profil, laufOptionen);
 
@@ -1862,7 +1909,13 @@ function empfehlen(kandidaten, profil, optionen = {}) {
   // Erst die fertige Liste, dann die Erklaerung. Der Grund gehoert ans Ende der
   // Kette, nicht an den Anfang: erklaert werden soll, warum ein Titel hier
   // steht - und das steht vorher nicht fest.
-  return abwechslung(vielfalt(bewertet, limit).map(erklaerungAnhaengen));
+  const gewaehlt = yield* vielfaltSchritte(bewertet, limit);
+  const erklaert = [];
+  for (const eintrag of gewaehlt) {
+    yield;
+    erklaert.push(erklaerungAnhaengen(eintrag));
+  }
+  return yield* abwechslungSchritte(erklaert);
 }
 
 // Aus Merkmalen und Belegen werden die Gruende. Der beste wird der sichtbare,
@@ -1938,11 +1991,13 @@ function erklaerungAnhaengen(eintrag) {
 // eine schwache Aussage ist keine Abwechslung, sondern ein schlechterer Grund.
 const NEBENGRUND_NAHE = 0.6;
 
-function abwechslung(liste) {
+function* abwechslungSchritte(liste) {
   const benutzt = new Map();
   const zaehlen = (text) => benutzt.get(text) || 0;
 
-  return liste.map((eintrag) => {
+  const ergebnis = [];
+  for (const eintrag of liste) {
+    yield;
     const wahl = [];
     const hauptGuete = eintrag.grundKonfidenz;
     for (const text of begruendung.textVarianten(eintrag)) wahl.push({ text, grund: null });
@@ -1958,18 +2013,19 @@ function abwechslung(liste) {
       if (zaehlen(eintragWahl.text) < zaehlen(beste.text)) beste = eintragWahl;
       if (zaehlen(beste.text) === 0) break;
     }
-    if (!beste) return eintrag;
+    if (!beste) { ergebnis.push(eintrag); continue; }
     benutzt.set(beste.text, zaehlen(beste.text) + 1);
-    if (!beste.grund) return { ...eintrag, grundText: beste.text };
+    if (!beste.grund) { ergebnis.push({ ...eintrag, grundText: beste.text }); continue; }
     // Ein Nebengrund hat gewonnen - dann wird auch er als Grund ausgewiesen,
     // damit Text und gemeldeter Grund nicht auseinandergehen.
-    return {
+    ergebnis.push({
       ...eintrag,
       ...beste.grund,
       grundKonfidenz: beste.grund.anteil,
       grundText: beste.text
-    };
-  });
+    });
+  }
+  return ergebnis;
 }
 
 // --- Reihenfolge fuer die Entdeckungsseiten -----------------------------------
@@ -2211,6 +2267,7 @@ module.exports = {
   zusammenfuehren,
   vielfalt,
   empfehlen,
+  empfehlenAsync,
   erkundungsReihenfolge,
   debugBericht,
   streuwert,

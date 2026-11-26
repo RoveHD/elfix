@@ -97,6 +97,9 @@ const fuerPlayer = direktfolgen.fuerPlayer(
 );
 pruefe("Die Liste kommt geordnet beim Player an",
   fuerPlayer.folgen.map((eintrag) => eintrag.folge).join(",") === "1,2,3");
+const nativeNummer = direktfolgen.fuerPlayer({ folgen: [folge(1, 1, { gesamtFolge: 64 })] }, bei(1, 1));
+pruefe("Die Playerprojektion bewahrt eine native absolute Anbieternummer",
+  nativeNummer.folgen[0].gesamtFolge === 64);
 pruefe("Und sie sagt, welche Folge laeuft",
   fuerPlayer.folgen.filter((eintrag) => eintrag.laeuft).length === 1
   && fuerPlayer.folgen.find((eintrag) => eintrag.laeuft).folge === 2,
@@ -143,7 +146,64 @@ pruefe("Ohne Staffelangabe bleibt die Liste leer statt undefiniert",
   Array.isArray(direktfolgen.fuerPlayer({ titel: "X", folgen: [] }, null).staffeln),
   "der Player laeuft sonst in einen Fehler beim Zeichnen");
 
-const fehler = pruefungen.filter((ok) => !ok).length;
-console.log(`
-${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
-process.exit(fehler ? 1 : 0);
+async function nummerierungTests() {
+  const staffeln = [1, 2, 3].map((staffel) => ({ staffel, url: `https://anbieter.example/serie/staffel-${staffel}` }));
+  const s4 = { offeneStaffel: 4, staffeln: [...staffeln, { staffel: 4, url: "https://anbieter.example/serie/staffel-4" }],
+    folgen: [folge(4, 1), folge(4, 2), folge(4, 3)] };
+  let aufrufe = 0;
+  const nummeriert = await direktfolgen.gesamtFolgenErmitteln(s4, bei(4, 3), async (staffel) => {
+    aufrufe += 1;
+    return { offeneStaffel: staffel.staffel,
+      folgen: Array.from({ length: 150 }, (_, index) => folge(staffel.staffel, index + 1,
+        index === 4 ? { gesperrt: true } : {})) };
+  });
+  pruefe("Staffel 4 Folge 3 wird aus echten Vorstaffeln zu Folge 453",
+    nummeriert.folgen[2].gesamtFolge === 453 && aufrufe === 3);
+  pruefe("Gesperrte Doppelfolgen-Slots zaehlen im Staffelpraefix",
+    nummeriert.folgen[2].gesamtFolge === 453);
+
+  let saison1Lesen = 0;
+  const ersteStaffel = await direktfolgen.gesamtFolgenErmitteln(
+    { folgen: [folge(1, 1)] }, bei(1, 1), async () => { saison1Lesen += 1; });
+  pruefe("Staffel 1 behaelt ihre Nummer ohne Nebenabruf",
+    ersteStaffel.folgen[0].gesamtFolge === undefined && saison1Lesen === 0);
+  let filmLesen = 0;
+  const film = await direktfolgen.gesamtFolgenErmitteln(
+    { folgen: [folge(0, 1)] }, bei(0, 1), async () => { filmLesen += 1; });
+  pruefe("Filmstaffel 0 wird nicht absolut nummeriert",
+    film.folgen[0].gesamtFolge === undefined && filmLesen === 0);
+
+  const s2 = { staffeln: [{ staffel: 1, url: "u1" }],
+    folgen: [folge(2, 1, { gesamtFolge: 13 }), folge(2, 2, { gesamtFolge: 14 })] };
+  let explizitLesen = 0;
+  const explizit = await direktfolgen.gesamtFolgenErmitteln(s2, bei(2, 1), async () => { explizitLesen += 1; });
+  pruefe("Explizite Anbieternummern bleiben erhalten und loesen keine Staffelabrufe aus",
+    explizit.folgen[0].gesamtFolge === 13 && explizit.folgen[1].gesamtFolge === 14 && explizitLesen === 0);
+
+  const luecke = await direktfolgen.gesamtFolgenErmitteln({ staffeln, folgen: [folge(4, 1)] }, bei(4, 1), async (staffel) => ({
+    offeneStaffel: staffel.staffel,
+    folgen: staffel.staffel === 2 ? [folge(2, 1), folge(2, 3)] : [folge(staffel.staffel, 1)]
+  }));
+  pruefe("Luecken in einer Vorstaffel lassen die Nummer unbekannt", luecke.folgen[0].gesamtFolge === null);
+  const fehlgeschlagen = await direktfolgen.gesamtFolgenErmitteln({ staffeln, folgen: [folge(4, 1)] }, bei(4, 1), async () => null);
+  pruefe("Fehlgeschlagene Abrufe liefern keinen geratenen Offset", fehlgeschlagen.folgen[0].gesamtFolge === null);
+
+  let gueltig = true;
+  let abbruchAufrufe = 0;
+  const abgebrochen = await direktfolgen.gesamtFolgenErmitteln({ staffeln, folgen: [folge(4, 1)] }, bei(4, 1), async (staffel) => {
+    abbruchAufrufe += 1;
+    gueltig = false;
+    return { offeneStaffel: staffel.staffel, folgen: [folge(staffel.staffel, 1)] };
+  }, () => gueltig);
+  pruefe("Abgebrochene Playerlaeufe starten keine Staffelabrufe",
+    abgebrochen.folgen[0].gesamtFolge === undefined && abbruchAufrufe === 1);
+}
+
+nummerierungTests().then(() => {
+  const fehler = pruefungen.filter((ok) => !ok).length;
+  console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
+  process.exit(fehler ? 1 : 0);
+}).catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

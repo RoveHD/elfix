@@ -1293,7 +1293,7 @@ ipcMain.handle("provider:navigate", async (_event, providerId, url) => {
   return activeState();
 });
 
-ipcMain.handle("search:all", async (event, query) => {
+ipcMain.handle("search:all", async (event, query, requestId) => {
   const owner = `webcontents:${event.sender.id}`;
   const value = String(query || "").trim();
   if (!value) { searchCoordinator.cancel(owner); return []; }
@@ -1308,7 +1308,10 @@ ipcMain.handle("search:all", async (event, query) => {
       key: JSON.stringify([value, selected]), owner,
       // Das Zeitlimit gilt je Anbieter (searchAllProviders); ein langsamer
       // Anbieter verwirft so nicht mehr die Treffer der anderen.
-      execute: signal => searchAllProviders(value, signal, selected),
+      execute: (signal, publish) => searchAllProviders(value, signal, selected, SUCHE_JE_ANBIETER_MS, publish),
+      onProgress: results => {
+        if (!event.sender.isDestroyed()) event.sender.send("search:progress", { requestId, query: value, results });
+      },
       isCacheable: results => Array.isArray(results) && results.every(result => !result?.error)
     });
   } catch (error) {
@@ -6668,25 +6671,34 @@ function buildNavigationUrl(input, provider) {
   return providerModel.buildSearchUrl(provider, value);
 }
 
-async function searchAllProviders(query, signal, selectedProviders = enabledProviders(), zeitlimit = SUCHE_JE_ANBIETER_MS) {
+async function searchAllProviders(query, signal, selectedProviders = enabledProviders(), zeitlimit = SUCHE_JE_ANBIETER_MS, onProgress) {
   const value = String(query || "").trim();
   if (!value) return [];
 
   // Ein Uebersetzer fuer die ganze Suche: alle Anbieter teilen ihn sich, und er
   // fragt erst, wenn ihn der erste braucht.
   const fremdtitel = fremdtitelLauf(value);
-  const targets = selectedProviders.map(async (provider) => {
+  const fertig = new Map();
+  const targets = selectedProviders.map(async (provider, index) => {
     const frist = AbortSignal.timeout(zeitlimit);
     const eigen = signal ? AbortSignal.any([signal, frist]) : frist;
+    let result;
     try {
-      return await searchProvider(provider, value, eigen, fremdtitel);
+      result = await searchProvider(provider, value, eigen, fremdtitel);
     } catch (error) {
       // Abgebrochen von aussen (neue Suche, Fenster zu): die ganze Suche endet.
       if (signal?.aborted) throw error;
       // Nur dieser Anbieter war zu langsam oder kaputt - die anderen zaehlen.
-      return providerSearchFailure(provider, providerModel.buildSearchUrl(provider, value),
+      result = providerSearchFailure(provider, providerModel.buildSearchUrl(provider, value),
         frist.aborted ? "Zeitüberschreitung bei der Suche" : (error?.message || "Nicht erreichbar"));
     }
+    if (!signal?.aborted) {
+      fertig.set(index, result);
+      // Fertige Anbieter werden sofort nutzbar. Die Reihenfolge bleibt dabei
+      // dieselbe wie im Endergebnis, unabhaengig von den Antwortzeiten.
+      onProgress?.([...fertig.entries()].sort((a, b) => a[0] - b[0]).map(([, value]) => value));
+    }
+    return result;
   });
 
   return Promise.all(targets);
@@ -10731,6 +10743,8 @@ async function menschentorLoesenLassen(provider, view, optionen = {}) {
   if (anbieterSeitenAnsicht.offen) return false;
   if (!mainWindow || mainWindow.isDestroyed() || !isLiveView(view)) return false;
   if (optionen.signal?.aborted || (optionen.gueltig && !optionen.gueltig())) return false;
+  const ladeSchranke = spielerLauf?.providerId === provider.id ? spielerLadeSchranke : null;
+  if (ladeSchranke) spielerVorbereitungMelden("confirmation-required");
   const wer = String(optionen.wer || "Der Anbieter");
   const inhalt = view.webContents;
   const startUrl = inhalt.getURL();
@@ -10897,6 +10911,10 @@ async function menschentorLoesenLassen(provider, view, optionen = {}) {
     }
     if (menschentorFenster === fenster) {
       menschentorFenster = null;
+      if (ladeSchranke && spielerLadeSchranke === ladeSchranke && gueltig()) {
+        spielerVorbereitungMelden(erfolg ? "source-search" : "error",
+          erfolg ? "" : "Die Anbieterbestätigung wurde nicht abgeschlossen.");
+      }
       if (gueltig() && isLiveView(spielerView) && !spielerMiniAktiv) {
         mainWindow.contentView.addChildView(spielerView);
         spielerLageSetzen();
@@ -11754,6 +11772,8 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
   if (spielerView && !spielerView.webContents.isDestroyed()) {
     spielerLaufSetzen(provider, url, ergebnis, optionen);
     spielerView.webContents.send("spieler:auftrag", spielerAuftrag());
+    spielerVorbereitungSenden();
+    spielerVorbereitungQuelleBereit();
     // Derselbe Player bleibt ueber Folgen-, Titel- und Hosterwechsel hinweg
     // offen. Seine erste Chatabfrage lief aber nur beim Laden der Seite. Nach
     // einem neuen Auftrag muss deshalb auch der aktuelle Raumzustand folgen;
@@ -11840,6 +11860,9 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
 
 /** Zu. Ohne laufenden Player kostet das nichts. */
 function direktSpielerSchliessen(grund = "") {
+  spielerWiederherstellungAbbrechen();
+  spielerLadeSchranke = null;
+  spielerVorbereitungsAnzeige = null;
   direktLaden.abort();
   spielerCfAbbrechen();
   if (!spielerView) {
@@ -11880,6 +11903,8 @@ function direktSpielerSchliessen(grund = "") {
 ipcMain.on("spieler:bereit", (ereignis) => {
   if (!spielerLauf || !spielerView || ereignis.sender !== spielerView.webContents) return;
   ereignis.sender.send("spieler:auftrag", spielerAuftrag());
+  spielerVorbereitungSenden();
+  spielerVorbereitungQuelleBereit();
   sendSpielerChatStatus();
   ereignis.sender.send("spieler:voice-duck", sprachchatDuckAktiv);
 });
@@ -11928,6 +11953,25 @@ function spielerFolgenSicht(stand, provider, url) {
     spoilerRegel: { ...settings.playback?.spoilerProtection },
     folgen: spoilerschutz.protectEpisodes(liste.folgen, spoilerOptionen(provider, url))
   } : null;
+}
+
+async function spielerGesamtFolgen(stand, provider, url, ziel, lauf, ereignis) {
+  const staffel = Number(stand?.offeneStaffel);
+  if (!Number.isSafeInteger(staffel) || staffel <= 0 || spielerLauf !== lauf
+    || !providerModel.isHttpUrl(url) || !providerModel.isHttpUrl(ziel)) return stand;
+  const serie = serienKennungAusUrl(url);
+  const zielUrl = new URL(ziel);
+  const zielSerie = serienKennungAusUrl(zielUrl.href);
+  if (!serie || !zielSerie || serie !== zielSerie || new URL(url).host !== zielUrl.host) return stand;
+  const zielIdentitaet = episodeIdentity(zielUrl.href);
+  if (zielIdentitaet && zielIdentitaet.season !== staffel) return stand;
+  const gueltig = () => spielerLauf === lauf && vomSpieler(ereignis);
+  return direktfolgen.gesamtFolgenErmitteln(stand, { season: staffel }, async (vorherigeStaffel) => {
+    if (!gueltig() || !providerModel.isHttpUrl(vorherigeStaffel?.url)) return null;
+    const adresse = new URL(vorherigeStaffel.url);
+    if (adresse.host !== zielUrl.host || serienKennungAusUrl(adresse.href) !== serie) return null;
+    return folgenlisteLesen(provider, adresse.href, { gueltig, still: true });
+  }, gueltig);
 }
 
 // Ein MAL-Eintrag kann beim Anbieter in mehrere Staffeln geteilt sein. Nur
@@ -12091,9 +12135,11 @@ ipcMain.on("spieler:sprung", (ereignis, von, nach, genutzt) => {
   }
 });
 
-ipcMain.on("spieler:fehler", (ereignis, text) => {
+ipcMain.on("spieler:fehler", (ereignis, text, auftragId) => {
   if (!spielerView || ereignis.sender !== spielerView.webContents) return;
+  if (auftragId !== undefined && auftragId !== spielerLauf?.id) return;
   console.log(`[ELFIX DIREKT] Player meldet: ${String(text || "").slice(0, 200)}`);
+  spielerVorbereitungMelden("error", "Das Video konnte nicht geladen werden.");
 });
 
 ipcMain.on("spieler:schliessen", (ereignis, grund) => {
@@ -12175,7 +12221,8 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
   // Die Wahl gilt sofort, auch wenn der neue Hoster erst eine Bestaetigung
   // braucht. Sonst spielt die alte Folge weiter und ihr Auftrag verhindert
   // danach die Uebernahme der freigegebenen Quelle der neuen Folge.
-  if (spielerLauf && !optionen.vorladen && (spielerLauf.providerId !== provider.id || !seiteGleich(spielerLauf.url, url))) {
+  if (spielerLauf && !optionen.vorladen && (optionen.neuLaden
+    || spielerLauf.providerId !== provider.id || !seiteGleich(spielerLauf.url, url))) {
     const offen = await direktSpielerOeffnen(provider, url, {
       ok: true, quelle: { adresse: "", typ: "", hoehe: 0 }, kopfzeilen: null,
       hoster: "", link: "", hosterliste: []
@@ -12645,13 +12692,22 @@ ipcMain.handle("spieler:folgen-filler", async (ereignis, staffelUrl = "") => {
   if (!providerModel.isHttpUrl(ziel) || new URL(ziel).host !== new URL(url).host) return null;
 
   const gueltig = () => spielerLauf === lauf && vomSpieler(ereignis);
-  const stand = await folgenlisteLesen(provider, ziel, { gueltig });
+  const stand = await folgenlisteLesen(provider, ziel, { gueltig, still: true });
   if (spielerLauf !== lauf || !vomSpieler(ereignis) || !stand) return null;
   // Kein erzwungenes `art: anime`: die gemeinsame Regel erkennt nur eine
   // Anime-Adresse oder eine ausdruecklich bestaetigte Metadaten-Gattung.
-  const angereichert = await animeFillerClientHolen().anreichern(stand, { url: ziel });
+  const [angereichert, nummeriert] = await Promise.all([
+    animeFillerClientHolen().anreichern(stand, { url: ziel }).catch(() => stand),
+    spielerGesamtFolgen(stand, provider, url, ziel, lauf, ereignis).catch(() => stand)
+  ]);
   if (spielerLauf !== lauf || !vomSpieler(ereignis)) return null;
-  const sicht = spielerFolgenSicht(angereichert, provider, url);
+  const nummern = new Map((nummeriert?.folgen || []).map((folge) => [String(folge.url || ""), folge.gesamtFolge]));
+  const kombiniert = { ...angereichert, folgen: (angereichert?.folgen || []).map((folge) => ({
+    ...folge,
+    gesamtFolge: nummern.has(String(folge.url || ""))
+      ? nummern.get(String(folge.url || "")) : folge.gesamtFolge
+  })) };
+  const sicht = spielerFolgenSicht(kombiniert, provider, url);
   return sicht ? { folgen: sicht.folgen } : null;
 });
 
@@ -12978,11 +13034,120 @@ let spielerDrift = { bestaetigt: 0, letzteMessung: 0, seitSprung: 0 };
 let spielerTakt = { stelle: 0, laeuft: false, puffert: false, rundeWarten: null, at: 0 };
 let spielerSyncBereit = null;
 let spielerFolgenVorbereitung = null;
+let spielerLadeSchranke = null;
+let spielerVorbereitungsAnzeige = null;
+let spielerWiederherstellung = null;
+let spielerWiederherstellungsGeneration = 0;
+
+function spielerVorbereitungSenden() {
+  if (!spielerView || spielerView.webContents.isDestroyed()) return;
+  const runde = spielerRunde();
+  const stand = spielerVorbereitungsAnzeige;
+  spielerView.webContents.send("spieler:vorbereitung", stand && runde
+    && stand.key === runde.key && stand.room === runde.raum ? stand : null);
+}
+
+function spielerVorbereitungMelden(state, detail = "", url = spielerLauf?.url) {
+  const schranke = spielerLadeSchranke;
+  if (!schranke || !url || !istGleicheFolge(url, schranke.url)
+    || aktiverWatchpartyRaum() !== schranke.room) return;
+  // Derselbe Takt wird nicht sekundenweise erneut verteilt. Die Meldung
+  // beschreibt einen belegten Zustandswechsel, keine neue Wartefrist.
+  if (schranke.state === state && schranke.detail === detail) return;
+  schranke.state = state;
+  schranke.detail = detail;
+  watchparty.vorbereitungsStatus(schranke.key, schranke.room, schranke.syncId, state, detail);
+}
+
+function spielerVorbereitungQuelleBereit() {
+  const schranke = spielerLadeSchranke;
+  const runde = spielerRunde();
+  if (!schranke || !runde || runde.key !== schranke.key || runde.raum !== schranke.room
+    || !spielerLauf?.quelle?.adresse || !istGleicheFolge(spielerLauf.url, schranke.url)) return;
+  spielerVorbereitungMelden("video-loading");
+  const id = `${schranke.room}:${schranke.key}:${schranke.syncId}`;
+  spielerSyncBereit = { id, key: schranke.key, raum: schranke.room,
+    syncId: schranke.syncId, auftragId: spielerLauf.id };
+  // Auch eine manuell bestaetigte Quelle kann einen neuen Auftrag erzeugen.
+  // Sie muss dieselbe Schranke mit der NEUEN Auftrags-ID fertigstellen.
+  spielerBefehl({ tun: "stelle", stelle: schranke.position, frameTime: schranke.frameTime,
+    laufen: false, springen: true, genau: true, bereitId: id });
+}
+
+function spielerWiederherstellungAbbrechen(melden = true) {
+  const lauf = spielerWiederherstellung;
+  if (!lauf) return;
+  spielerWiederherstellung = null;
+  spielerWiederherstellungsGeneration += 1;
+  spielerLadeSchranke = null;
+  spielerSyncBereit = null;
+  spielerFolgenVorbereitung = null;
+  direktLaden.abort();
+  spielerCfAbbrechen();
+  menschentorFenster?.abbrechen("watchparty-abbruch");
+  if (melden) watchparty.wiederherstellungAbbrechen(lauf.key, lauf.room, lauf.syncId);
+  spielerVorbereitungsAnzeige = null;
+  spielerVorbereitungSenden();
+  spielerBefehl({ tun: "stelle", stelle: spielerTakt.stelle, laufen: false, springen: false, genau: false });
+}
+
+function spielerWiederherstellungBeginnen(eintrag, nachricht) {
+  const runde = spielerRunde();
+  if (!runde || runde.key !== eintrag.key || runde.raum !== eintrag.room
+    || !nachricht.syncId || nachricht.phase !== "leave" || !providerModel.isHttpUrl(nachricht.url)
+    || watchpartySerienSchluessel(nachricht.url) !== watchpartySerienSchluessel(spielerLauf.url)) return;
+  if (spielerWiederherstellung?.syncId === nachricht.syncId) {
+    // Nach einem Verbindungsabbruch kann das Relay dieselbe Aufforderung
+    // wiederholen. Einen bereits abgeraeumten Player erneut bestaetigen,
+    // aber eine inzwischen neu geladene Quelle nicht noch einmal zerlegen.
+    if (spielerWiederherstellung.phase === "waiting") {
+      watchparty.wiederherstellungVerlassen(eintrag.key, eintrag.room, nachricht.syncId);
+    }
+    return;
+  }
+  const merker = `${eintrag.room}|${eintrag.key}`;
+  if (watchpartySync.istVeraltet(watchpartyLetztesEreignis.get(merker), nachricht)) return;
+  watchpartyLetztesEreignis.set(merker, { sequenceId: Number(nachricht.sequenceId) || 0,
+    timestamp: Number(nachricht.timestamp ?? nachricht.at) || 0, episodeId: String(nachricht.episodeId || "") });
+  spielerWiederherstellung = { key: eintrag.key, room: eintrag.room,
+    syncId: nachricht.syncId, phase: "leaving" };
+  spielerWiederherstellungsGeneration += 1;
+  spielerLadeSchranke = null;
+  spielerSyncBereit = null;
+  spielerFolgenVorbereitung = null;
+  direktAuftragBeginnen();
+  spielerCfAbbrechen();
+  menschentorFenster?.abbrechen("watchparty-neustart");
+  spielerRtxStop();
+  spielerKopfzeilen = null;
+  spielerLetzterStand = null;
+  const position = sanitizePositiveNumber(nachricht.position);
+  // Der Player bleibt als Bedienflaeche offen, seine alte Quelle ist ab jetzt
+  // ungueltig. Alte Takte/Fehler duerfen keinen neuen Fortschritt schreiben.
+  spielerLauf = { ...spielerLauf, id: ++spielerAuftragId,
+    quelle: { adresse: "", typ: "", hoehe: 0 }, laden: true, auswahl: false,
+    rundeWarten: true, rundeUebernehmen: false, startzeit: position };
+  spielerTakt = { stelle: position, laeuft: false, puffert: false, rundeWarten: true, at: 0 };
+  spielerBefehl({ tun: "runde-neustart", syncId: nachricht.syncId });
+}
+
+ipcMain.on("spieler:neustart-bereit", (ereignis, syncId) => {
+  const lauf = spielerWiederherstellung;
+  if (!vomSpieler(ereignis) || !lauf || lauf.syncId !== syncId || lauf.phase !== "leaving") return;
+  lauf.phase = "waiting";
+  watchparty.wiederherstellungVerlassen(lauf.key, lauf.room, lauf.syncId);
+});
+
+ipcMain.on("spieler:vorbereitung-abbrechen", (ereignis, syncId) => {
+  if (!vomSpieler(ereignis) || spielerWiederherstellung?.syncId !== syncId) return;
+  spielerWiederherstellungAbbrechen();
+});
 
 ipcMain.on("spieler:sync-bereit", (ereignis, id) => {
   const bereit = spielerSyncBereit;
   if (!vomSpieler(ereignis) || !bereit || bereit.id !== id || bereit.auftragId !== spielerLauf?.id) return;
   spielerSyncBereit = null;
+  spielerVorbereitungMelden("ready");
   watchparty.bereitZumStart(bereit.key, bereit.raum, bereit.syncId);
 });
 
@@ -13137,8 +13302,8 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
     return true;
   }
 
-  if (urteil.tun === "syncprepare" && nachricht.reason === "episode-change"
-    && nachricht.url && !istGleicheFolge(nachricht.url, adresse)) {
+  if (urteil.tun === "syncprepare" && (nachricht.reason === "episode-change" || nachricht.recovery === true)
+    && nachricht.url && (nachricht.recovery === true || !istGleicheFolge(nachricht.url, adresse))) {
     if (watchpartySerienSchluessel(nachricht.url) !== watchpartySerienSchluessel(adresse)) return false;
     /*
      * Dieselbe Vorbereitung zweimal ist keine zweite.
@@ -13167,7 +13332,12 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
     let geladen;
     try {
       geladen = await ohneWatchpartyFolgenwechselEcho(provider, nachricht.url,
-        () => direktFolgeSpielen(provider, nachricht.url, { startzeit: 0, rundeWarten: true, istAktuell: quelleIstAktuell }));
+        () => direktFolgeSpielen(provider, nachricht.url, {
+          startzeit: nachricht.recovery ? sanitizePositiveNumber(nachricht.position) : 0,
+          neuLaden: nachricht.recovery === true, rundeWarten: true, istAktuell: quelleIstAktuell
+        }));
+    } catch {
+      geladen = { ok: false, grund: "Die Folge konnte nicht geladen werden." };
     } finally {
       if (spielerFolgenVorbereitung === vorbereitung) spielerFolgenVorbereitung = null;
     }
@@ -13188,6 +13358,7 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
       return true;
     }
     if (!geladen?.ok) {
+      spielerVorbereitungMelden("error", "Die Quelle konnte nicht geladen werden.", nachricht.url);
       spielerBefehl({ tun: "stelle", stelle: spielerTakt.stelle, laufen: false, springen: false, genau: false });
       sendToast(geladen?.grund || "Die nächste Folge konnte nicht vorbereitet werden.");
       // Und die Runde erfaehrt es. Ohne diese Absage warteten alle anderen die
@@ -13531,6 +13702,22 @@ async function applyWatchpartyControl(nachricht) {
   const eintrag = watchpartyEintrag(nachricht.key, nachricht.room || aktiv);
   if (!eintrag) return;
 
+  if (nachricht.action === "syncrecover") {
+    spielerWiederherstellungBeginnen(eintrag, nachricht);
+    return;
+  }
+  if (nachricht.action === "syncfailed") {
+    if (spielerWiederherstellung?.key === eintrag.key && spielerWiederherstellung.room === eintrag.room
+      && spielerWiederherstellung.syncId === nachricht.syncId) spielerWiederherstellungAbbrechen(false);
+    if (spielerLadeSchranke?.key === eintrag.key && spielerLadeSchranke.room === eintrag.room
+      && spielerLadeSchranke.syncId === nachricht.syncId) {
+      spielerLadeSchranke = null;
+      spielerSyncBereit = null;
+      spielerBefehl({ tun: "stelle", stelle: spielerTakt.stelle, laufen: false, springen: false, genau: false });
+    }
+    return;
+  }
+
   // Nachrichten koennen sich unterwegs ueberholen. Ein verspaetetes Play darf
   // nicht nach einem neueren Pause angewendet werden - sonst laeuft ein Geraet
   // weiter, das alle anderen laengst angehalten haben.
@@ -13568,9 +13755,30 @@ async function applyWatchpartyControl(nachricht) {
   // oder ein neuer Start derselben Folge ersetzt deren Steuerung, aber nicht
   // ihren offenen Quellenauftrag. Dessen Signal und Spieler-ID pruefen die
   // Lade-/Uebergabefunktionen weiterhin; eine andere Folge gilt hier nie.
-  const quelleIstAktuell = () => istAktuell() || Boolean(angenommen?.episodeId
+  if (urteil.tun === "syncprepare" && nachricht.syncId && spielerLauf) {
+    spielerLadeSchranke = { key: eintrag.key, room: eintrag.room, syncId: nachricht.syncId,
+      url: nachricht.url || spielerLauf.url, position: sanitizePositiveNumber(nachricht.position),
+      frameTime: nachricht.frameTime };
+    if (nachricht.recovery && spielerWiederherstellung?.syncId === nachricht.syncId) {
+      spielerWiederherstellung.phase = "rejoining";
+    }
+    spielerVorbereitungMelden(nachricht.recovery || !spielerLauf.quelle?.adresse
+      || !istGleicheFolge(spielerLauf.url, spielerLadeSchranke.url) ? "source-search" : "video-loading",
+    "", spielerLadeSchranke.url);
+  } else if (urteil.tun === "syncstart") {
+    spielerLadeSchranke = null;
+    spielerWiederherstellung = null;
+    spielerVorbereitungsAnzeige = null;
+    spielerVorbereitungSenden();
+  } else if (["pause", "seek", "navigate"].includes(nachricht.action)) {
+    spielerLadeSchranke = null;
+    if (spielerWiederherstellung) spielerWiederherstellungAbbrechen(false);
+  }
+  const wiederherstellungsGeneration = spielerWiederherstellungsGeneration;
+  const quelleIstAktuell = () => wiederherstellungsGeneration === spielerWiederherstellungsGeneration
+    && (istAktuell() || Boolean(angenommen?.episodeId
     && watchpartyLetztesEreignis.get(merker)?.episodeId === angenommen.episodeId
-    && spielerLauf && istGleicheFolge(spielerLauf.url, nachricht.url));
+    && spielerLauf && istGleicheFolge(spielerLauf.url, nachricht.url)));
 
   const binHost = Boolean(eintrag.hostId) && eintrag.hostId === eintrag.myId;
 
@@ -13799,7 +14007,13 @@ function sendWatchpartyWatchstate(nachricht) {
   }));
 
   // Dieselben Angaben dreifach: Kopfzeile, Player und Karten.
-  if (istOffen) zeigeLeisteImPlayer(mitglieder);
+  if (istOffen) {
+    zeigeLeisteImPlayer(mitglieder);
+    spielerVorbereitungsAnzeige = nachricht.preparation
+      ? { ...nachricht.preparation, key: nachricht.key, room: nachricht.room || raum,
+        myId: watchparty.geraetId } : null;
+    spielerVorbereitungSenden();
+  }
   mainWindow.webContents.send("watchparty:watchstate", {
     key: nachricht.key,
     room: nachricht.room || raum || "",

@@ -63,6 +63,9 @@ async function run() {
       let quellOptionen, ladenBeenden;
       const eintrag = { key: "serie:test", room: "probe", hostId: "host", myId: "gast" };
       const c = vm.createContext({ taste, console, Date, watchpartySync,
+        spielerLadeSchranke: null, spielerWiederherstellung: null, spielerVorbereitungsAnzeige: null,
+        spielerWiederherstellungsGeneration: 0, spielerVorbereitungSenden() {}, spielerVorbereitungMelden() {},
+        sanitizePositiveNumber: wert => Math.max(0, Number(wert) || 0),
         spielerLauf: { id: 6, url: episode.replace("episode-2", "episode-1") },
         spielerTakt: { stelle: 0, laeuft: false, at: Date.now() },
         spielerFolgenVorbereitung: null, spielerSyncBereit: null,

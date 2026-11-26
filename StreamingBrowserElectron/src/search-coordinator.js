@@ -60,10 +60,22 @@ function createSearchCoordinator(options = {}) {
 
   function start(key, execute, isCacheable) {
     const controller = new AbortController();
-    const entry = { controller, consumers: new Set(), settled: false };
+    const entry = { controller, consumers: new Set(), settled: false, progress: undefined };
     pending.set(key, entry);
+    const publish = (value) => {
+      if (entry.settled || controller.signal.aborted) return;
+      entry.progress = value;
+      for (const consumer of entry.consumers) {
+        // Ein geschlossenes Fenster oder eine defekte Anzeige darf weder die
+        // Providerarbeit noch andere Mitbenutzer derselben Suche abbrechen.
+        try { consumer.onProgress?.(value); } catch {}
+      }
+    };
     Promise.resolve()
-      .then(() => execute(controller.signal))
+      .then(() => {
+        controller.signal.throwIfAborted();
+        return execute(controller.signal, publish);
+      })
       .then((value) => {
         // Manche Fetch-Wrapper loesen trotz Signal noch auf. Ein abgebrochener
         // Lauf darf auch dann weder antworten noch den Cache fuellen.
@@ -89,7 +101,7 @@ function createSearchCoordinator(options = {}) {
     return entry;
   }
 
-  function request({ key, owner, execute, isCacheable = () => true }) {
+  function request({ key, owner, execute, isCacheable = () => true, onProgress }) {
     const cacheKey = String(key || "");
     if (!cacheKey) return Promise.reject(new Error("Suchschluessel fehlt"));
     if (typeof execute !== "function") return Promise.reject(new TypeError("Suche fehlt"));
@@ -110,7 +122,12 @@ function createSearchCoordinator(options = {}) {
       ? existing
       : start(cacheKey, execute, isCacheable);
     return new Promise((resolve, reject) => {
-      entry.consumers.add({ owner: ownerKey, resolve, reject });
+      entry.consumers.add({ owner: ownerKey, resolve, reject, onProgress });
+      // Ein zweites Fenster teilt auch bereits gefundene Treffer, statt bis
+      // zum langsamsten Anbieter auf seine erste Anzeige warten zu muessen.
+      if (entry.progress !== undefined) {
+        try { onProgress?.(entry.progress); } catch {}
+      }
     });
   }
 

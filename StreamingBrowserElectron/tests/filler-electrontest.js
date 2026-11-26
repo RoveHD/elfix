@@ -13,11 +13,11 @@ let nachtrag;
 const frist = setTimeout(() => beenden(1, Error("Filler UI timeout")), 25000);
 const labels = ["Manga-Canon", "Canon / Filler", "Filler", "Anime-Canon"];
 const typen = ["manga_canon", "mixed_canon/filler", "filler", "anime_canon"];
-const basis = "https://aniworld.to/anime/stream/beispiel/staffel-1";
-const folgen = Array.from({ length: 24 }, (_, i) => ({ staffel: 1, folge: i + 1,
+const basis = "https://aniworld.to/anime/stream/beispiel/staffel-4";
+const folgen = Array.from({ length: 24 }, (_, i) => ({ staffel: 4, folge: i + 1,
   url: `${basis}/episode-${i + 1}`, titel: i === 4 ? "" : "Ein langer Folgentitel zum Prüfen der Lesbarkeit",
   laeuft: i === 0, seen: i === 0 }));
-const angereichert = { folgen: folgen.map((f, i) => ({ ...f, filler: i === 4 ? undefined : {
+const angereichert = { folgen: folgen.map((f, i) => ({ ...f, gesamtFolge: 451 + i, filler: i === 4 ? undefined : {
   type: typen[i % 4], label: labels[i % 4], source: "AnimeFillerList",
   sourceUrl: "https://www.animefillerlist.com/shows/beispiel", episode: i + 1
 } })) };
@@ -38,7 +38,7 @@ function beenden(code, error) {
 }
 app.whenReady().then(async () => {
   ipcMain.handle("spieler:folgen", async () => ({ titel: "Anime · Folgenauswahl", folgen,
-    fillerQuelle: basis, staffeln: [{ staffel: 1, url: basis }] }));
+    fillerQuelle: basis, staffeln: [{ staffel: 4, url: basis }] }));
   ipcMain.handle("spieler:folgen-filler", () => new Promise(resolve => { nachtrag = resolve; }));
   ipcMain.handle("spieler:chat-status", () => ({ active: false, messages: [] }));
   fenster = new BrowserWindow({ show: false, width: 1000, height: 820, webPreferences: {
@@ -52,6 +52,8 @@ app.whenReady().then(async () => {
   assert.equal(await lesen("folgenListe.querySelectorAll('.folge').length"), 24);
   assert.equal(await lesen("folgenListe.querySelectorAll('.fillerBadge').length"), 0,
     "episodes are usable before metadata arrives");
+  assert.equal(await lesen("folgenListe.children[2].querySelector('.nummer').textContent"), "S4 · Folge 3",
+    "a missing offset is not presented as an absolute number");
   await lesen("folgenListe.querySelector('.folge').focus(); window.__fokus = document.activeElement; folgenListe.scrollTop = 70");
   const vorher = await lesen("folgenListe.scrollTop");
   nachtrag(angereichert);
@@ -61,6 +63,11 @@ app.whenReady().then(async () => {
   assert.equal(await lesen("folgenListe.scrollTop"), vorher, "metadata preserves scroll");
   assert.equal(await lesen("folgenListe.children[4].querySelector('.fillerBadge') === null"), true,
     "unknown stays unlabelled");
+  assert.equal(await lesen("folgenListe.children[2].querySelector('.nummer').textContent"), "Folge 453 · S4 F3");
+  assert.equal(await lesen("folgenListe.children[4].querySelector('.nummer').textContent"), "Folge 455 · S4 F5",
+    "numbering does not depend on filler coverage");
+  assert.equal(await lesen("folgenNummer({staffel:0,folge:2,gesamtFolge:452})"), "Film 2",
+    "films remain outside series numbering");
   await lesen("folgenListe.scrollTop = 0; document.activeElement.blur()");
   await lesen("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
   const bounds = await lesen(`(() => {
@@ -70,6 +77,12 @@ app.whenReady().then(async () => {
     });
   })()`);
   assert(bounds, "badges fit inside the episode list");
+  assert(await lesen(`(() => {
+    const zeile = folgenListe.children[2];
+    const nummer = zeile.querySelector('.nummer').getBoundingClientRect();
+    const badge = zeile.querySelector('.fillerBadge').getBoundingClientRect();
+    return nummer.right <= badge.left;
+  })()`), "absolute numbers and filler labels do not overlap");
   const panelDesign = await lesen(`(() => ({
     width: folgenPanel.getBoundingClientRect().width,
     scrollbar: getComputedStyle(folgenListe).scrollbarWidth,
@@ -85,6 +98,13 @@ app.whenReady().then(async () => {
     await new Promise(resolve => setTimeout(resolve, 150));
     fs.writeFileSync(process.env.ELFIX_FILLER_SCREENSHOT, (await fenster.webContents.capturePage()).toPNG());
   }
+  fenster.setContentSize(420, 680);
+  await warten(() => lesen("window.innerWidth === 420"));
+  assert(await lesen(`(() => [...folgenListe.querySelectorAll('.zeile')].every(z => {
+    const nummer = z.querySelector('.nummer').getBoundingClientRect();
+    const badge = z.querySelector('.fillerBadge')?.getBoundingClientRect();
+    return !badge || nummer.right <= badge.left;
+  }))()`), "numbers and filler labels also fit in a narrow player");
   console.log("OK Electron-Filler: echte Preload, vier Labels, optionale Daten, Fokus/Scroll und Layout");
   beenden(0);
 }).catch(error => beenden(1, error));

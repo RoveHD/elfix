@@ -1150,9 +1150,13 @@ function erstellen(umgebung) {
       return personalCache.items.length && !refresh && !neuRechnen ? personalCache.items : personalPending;
     }
 
+    const imHintergrund = personalCache.items.length && !refresh && !neuRechnen;
+    let erneuert = false;
     const lauf = buildPersonalRecommendations(poolGroesse, refresh)
       .then((items) => {
-        personalCache = { at: Date.now(), items, signatur: verlaufSignatur(), vollstaendig: true };
+        // Waehrend der Berechnung darf sich der Verlauf weiter aendern. Das
+        // Ergebnis gehoert zum Ausgangsstand, nicht zum Stand beim Abschluss.
+        personalCache = { at: Date.now(), items, signatur, vollstaendig: true };
         const cache = umgebung.cacheLesen();
         // Auf die Platte geht nur der Anfang: daraus baut sich die Startseite
         // beim naechsten Start sofort auf. Den langen Rest rechnet die
@@ -1163,14 +1167,18 @@ function erstellen(umgebung) {
           items: items.slice(0, PERSONAL_POOL_SIZE)
         };
         umgebung.cacheSchreiben();
+        erneuert = true;
         return items;
       })
       .catch(() => personalCache.items)
       .finally(() => {
         if (personalPending === lauf) personalPending = null;
+        // Die erste Antwort enthielt noch den gespeicherten Pool. Jetzt darf
+        // die Startseite die fertigen Vorschlaege abholen, ohne neu zu rechnen.
+        if (imHintergrund && erneuert) umgebung.melden();
       });
     personalPending = lauf;
-    return lauf;
+    return imHintergrund ? personalCache.items : lauf;
   }
 
   async function buildPersonalRecommendations(limit, refresh) {
@@ -1440,7 +1448,7 @@ function erstellen(umgebung) {
       item.extern = metadatenAusCache(item.baseTitle || item.title, item.url);
     }
 
-    const ergebnis = empfehlung.empfehlen(bewertbar, profil, { ...laufOptionen, limit });
+    const ergebnis = await empfehlung.empfehlenAsync(bewertbar, profil, { ...laufOptionen, limit });
 
     if (umgebung.debug) {
       console.log(`[empfehlung] ${ergebnis.length} Vorschlaege aus ${kandidaten.length} Kandidaten,`

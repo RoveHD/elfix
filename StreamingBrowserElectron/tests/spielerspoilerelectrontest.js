@@ -19,6 +19,8 @@ let anzahl = 0;
 const hosterAufrufe = [];
 const { protectEpisode } = require("../src/spoilerschutz");
 let schutz = false;
+let langeListe = false;
+let listenFreigabe = null;
 let queueAufrufe = 0;
 const folgenAufrufe = [];
 const fehler = [];
@@ -51,20 +53,29 @@ app.whenReady().then(async () => {
     weiterZaehler: 0, naechste: { url: "https://fixture.test/episode-2", beschriftung: "Folge 2" } };
   ipcMain.on("spieler:bereit", event => event.sender.send("spieler:auftrag", auftrag));
   ipcMain.on("spieler:fehler", (_event, text) => fehler.push(text));
-  const staffeln = [{ staffel: 0, url: "https://fixture.test/filme" }, { staffel: 1, url: "https://fixture.test/staffel-1" }];
+  const staffeln = [{ staffel: 0, url: "https://fixture.test/filme" },
+    { staffel: 1, url: "https://fixture.test/staffel-1" }, { staffel: 4, url: "https://fixture.test/staffel-4" }];
   // Wie im Hauptprozess: der Gesehen-Stand ist veraenderlich, und die Regel
   // reist mit, damit die Schalter unter der Liste beim Aufklappen stimmen.
   let gesehen = [{ season: 1, episode: 1 }];
   const regel = { enabled: false, roomMinimum: true, shareWatchedWithRoom: true };
   const gesehenAufrufe = [];
   const schalterAufrufe = [];
-  ipcMain.handle("spieler:folgen", async (_event, _frisch, url) => ({
+  ipcMain.handle("spieler:folgen", async (_event, _frisch, url) => {
+    if (listenFreigabe) await new Promise(resolve => { listenFreigabe = resolve; });
+    const staffel = url?.endsWith("staffel-4") ? 4 : 1;
+    return {
     titel: "Folgen und Filme", staffeln, spoilerRegel: { ...regel, enabled: schutz },
-    folgen: [
+    folgen: (langeListe ? Array.from({ length: 60 }, (_, i) => ({
+      staffel, folge: i + 1, titel: i < 10
+        ? `Titel ${i + 1}: Ein sehr langer Folgentitel, der beim Freigeben durch den Spoilerschutz mehrere Zeilen belegt`
+        : `Titel ${i + 1}`, gesamtFolge: staffel === 4 ? 451 + i : i + 1,
+      url: `https://fixture.test/staffel-${staffel}/episode-${i + 1}`, laeuft: staffel === 1 && i === 0
+    })) : [
       { staffel: 1, folge: 1, titel: "Bekannte Folge", url: "https://fixture.test/episode-1", laeuft: true },
       { staffel: 1, folge: 2, titel: "Die geheime Wendung", url: "https://fixture.test/episode-2" }
-    ].map(e => protectEpisode(e, { enabled: schutz, completedEpisodes: gesehen }))
-  }));
+    ]).map(e => protectEpisode(e, { enabled: schutz, completedEpisodes: gesehen }))
+  }; });
   ipcMain.handle("spieler:gesehen", (_event, folgen, an) => {
     gesehenAufrufe.push({ folgen, an });
     for (const folge of folgen) {
@@ -173,6 +184,55 @@ app.whenReady().then(async () => {
   pruefe("Ein Schalter meldet Feld und Zustand", schalterAufrufe.at(-1),
     { feld: "shareWatchedWithRoom", an: false });
   pruefe("Und die Antwort setzt die Anzeige", await lesen("spoilerShare.checked"), false);
+
+  // Lange Listen: Ein Haken darf weder die Liste leeren noch zur laufenden
+  // Staffel springen. Auch Tastaturfokus und die sichtbare Zeile bleiben da.
+  langeListe = true;
+  await lesen("folgenStand=null; folgenZeigen()");
+  await lesen("staffelOeffnen(4)");
+  pruefe("Fortlaufende Nummer und lokale Zuordnung sind sichtbar", await lesen(
+    "folgenListe.children[2].querySelector('.nummer').textContent"), "Folge 453 · S4 F3");
+  await lesen("folgenListe.children[39].querySelector('.hakenKnopf').focus(); folgenListe.scrollTop=2300");
+  const position = await lesen("folgenPositionLesen()");
+  pruefe("Die Probe steht weit unten in der Liste", position.scrollTop > 1000, true);
+  listenFreigabe = true;
+  await lesen("folgenListe.children[39].querySelector('.hakenKnopf').click()");
+  await warten(() => typeof listenFreigabe === "function");
+  pruefe("Waehrend der Aktualisierung bleibt die Liste sichtbar", await lesen(
+    "[offeneStaffel, folgenListe.children.length, folgenListe.scrollTop]"), [4, 60, position.scrollTop]);
+  const freigeben = listenFreigabe;
+  listenFreigabe = null;
+  freigeben();
+  await warten(() => lesen("folgenListe.children[39].querySelector('.hakenKnopf').getAttribute('aria-pressed') === 'true'"));
+  pruefe("Abhaken behaelt Scrollposition und Fokus", await lesen("folgenPositionLesen()"), position);
+  pruefe("Abhaken verwendet weiter die lokale Staffelnummer", gesehenAufrufe.at(-1),
+    { folgen: [{ season: 4, episode: 40 }], an: true });
+  await lesen("folgenListe.children[39].querySelector('.hakenKnopf').click()");
+  await warten(() => lesen("folgenListe.children[39].querySelector('.hakenKnopf').getAttribute('aria-pressed') === 'false'"));
+  pruefe("Zuruecknehmen behaelt ebenfalls Scrollposition und Fokus", await lesen("folgenPositionLesen()"), position);
+  await lesen("staffelGesehen.click()");
+  await warten(() => lesen("folgenListe.querySelectorAll('.hakenKnopf.an').length === 60"));
+  const nachLangenTiteln = await lesen("folgenPositionLesen()");
+  pruefe("Auch laengere freigegebene Titel verschieben die sichtbare Zeile nicht",
+    nachLangenTiteln.anker === position.anker && Math.abs(nachLangenTiteln.abstand - position.abstand) <= 1, true);
+  await lesen("staffelUngesehen.click()");
+  await warten(() => lesen("folgenListe.querySelectorAll('.hakenKnopf.an').length === 0"));
+  pruefe("Die ganze Staffel zuruecknehmen springt nicht nach oben", await lesen("folgenListe.scrollTop"), position.scrollTop);
+
+  // Ein spaeter Gesehen-Abruf darf eine bewusste Staffelauswahl nicht umkehren.
+  listenFreigabe = true;
+  await lesen("folgenListe.children[39].querySelector('.hakenKnopf').click()");
+  await warten(() => typeof listenFreigabe === "function");
+  const veraltet = listenFreigabe;
+  listenFreigabe = null;
+  await lesen("staffelOeffnen(1)");
+  veraltet();
+  await lesen("new Promise(f => requestAnimationFrame(() => requestAnimationFrame(f)))");
+  pruefe("Spaete Haken-Antwort ueberschreibt keine neue Staffel", await lesen(
+    "[offeneStaffel, [...folgenListe.children].every(e=>e.dataset.folgeUrl.includes('/staffel-1/'))]"), [1, true]);
+
+  langeListe = false;
+  await lesen("folgenStand=null; folgenZeigen()");
 
   await lesen("staffelGesehen.click()");
   await warten(() => lesen("folgenListe.textContent.includes('Die geheime Wendung')"));

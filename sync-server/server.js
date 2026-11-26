@@ -199,6 +199,8 @@ function zustandLaden() {
         // als Map serialisiert zu einem leeren Objekt, und das ueberlebt
         // den Spread darueber.
         stand: new Map(),
+        syncAbschluss: null,
+        playbackAusgeschlossen: new Set(),
         nachgezogen: new Map(),
         spoiler: new Map(),
         spoilerWartet: new Set()
@@ -257,6 +259,8 @@ function zustandSpeichernSpaeter() {
           // fluechtig - die Geraete melden ihn nach einem Neustart selbst.
           sync: undefined,
           syncTimer: undefined,
+          syncAbschluss: undefined,
+          playbackAusgeschlossen: undefined,
           stand: undefined,
           abgeloesteFolgen: undefined,
           // Wer schon einmal geholt wurde, ist nach einem Neustart ohnehin
@@ -1075,7 +1079,7 @@ function zustandSenden(raumcode) {
     client.send(JSON.stringify({
       type: "state",
       identityVersion: 2,
-      features: ["voice"],
+      features: ["voice", "playback-recovery-v1"],
       shared,
       peers,
       you: client.geraetId
@@ -1273,6 +1277,7 @@ function istVerbunden(raumcode, geraetId) {
 }
 
 function istAktiv(raumcode, eintrag, geraetId, wert) {
+  if (eintrag.playbackAusgeschlossen?.has(geraetId)) return false;
   if (!wert || !wert.sitzung) return false;
   if (!eintrag.members.has(geraetId)) return false;
   if (Date.now() - wert.at > STAND_FRISCH_MS) return false;
@@ -1345,7 +1350,7 @@ const HOST_GNADE_MS = 12000;
 // Folgenwechsel gehoert nicht dazu, und ein Neuladen auch nicht.
 function aktuelleHostId(raumcode, eintrag) {
   const gehalten = eintrag.hostId;
-  if (gehalten && eintrag.members.has(gehalten)) {
+  if (gehalten && eintrag.members.has(gehalten) && !eintrag.playbackAusgeschlossen?.has(gehalten)) {
     const wert = eintrag.stand?.get(gehalten);
     if (wert && istAktiv(raumcode, eintrag, gehalten, wert)) {
       eintrag.hostGesehen = Date.now();
@@ -1563,6 +1568,7 @@ function standSenden(raumcode, eintrag) {
       key: eintrag.key,
       tempo: eintrag.tempo || 1,
       members: standNachAussen(raumcode, eintrag, client.geraetId),
+      preparation: syncStand(eintrag),
       pausedBy: eintrag.letzteAktion?.type === "pause" ? eintrag.letzteAktion.name : "",
       lastAction: eintrag.letzteAktion || null
     }));
@@ -1643,6 +1649,244 @@ function offeneSyncTeilnehmer(raumcode, eintrag) {
   ));
 }
 
+// Dieser Zustand gehoert zur Startgeneration, nicht zum Player-Herzschlag:
+// auch ein Geraet ohne gefundene Quelle muss mit Namen sichtbar bleiben.
+function syncStand(eintrag) {
+  const sync = eintrag.sync;
+  if (!sync) return eintrag.syncAbschluss || null;
+  return {
+    syncId: sync.id, reason: sync.grund, phase: sync.phase || "preparing",
+    recovery: Boolean(sync.recovery), currentMemberId: sync.aktuell || "",
+    members: [...sync.status.entries()].map(([id, wert]) => ({ id, ...wert }))
+  };
+}
+
+function syncStatusSetzen(eintrag, id, state, detail = "") {
+  const sync = eintrag.sync;
+  if (!sync?.status.has(id)) return;
+  sync.status.set(id, { name: eintrag.members.get(id) || sync.status.get(id).name,
+    state, detail: text(detail, 200) });
+  if (sync.recovery && state === "error") {
+    if (!eintrag.playbackAusgeschlossen) eintrag.playbackAusgeschlossen = new Set();
+    eintrag.playbackAusgeschlossen.add(id);
+  } else if (state === "ready") eintrag.playbackAusgeschlossen?.delete(id);
+}
+
+function syncAbschliessen(raumcode, eintrag, phase, reason = "") {
+  const sync = eintrag.sync;
+  if (!sync) return;
+  clearTimeout(eintrag.syncTimer);
+  eintrag.syncTimer = null;
+  eintrag.syncAbschluss = { ...syncStand(eintrag), phase, currentMemberId: "" };
+  eintrag.sync = null;
+  for (const client of offeneSyncTeilnehmer(raumcode, eintrag)) {
+    if (!sync.status.has(client.geraetId)) continue;
+    client.send(JSON.stringify({ type: "syncfailed", key: eintrag.key,
+      syncId: sync.id, reason: reason || phase, recovery: Boolean(sync.recovery) }));
+  }
+  standSenden(raumcode, eintrag);
+}
+
+function syncFrist(raumcode, eintrag, frist, callback) {
+  clearTimeout(eintrag.syncTimer);
+  const id = eintrag.sync.id;
+  eintrag.syncTimer = setTimeout(() => {
+    if (eintrag.sync?.id === id) callback();
+  }, frist);
+  eintrag.syncTimer.unref?.();
+}
+
+function syncWiederherstellungWeiter(raumcode, eintrag) {
+  const sync = eintrag.sync;
+  if (!sync?.recovery || sync.phase !== "rejoining") return;
+  clearTimeout(eintrag.syncTimer);
+  sync.aktuell = "";
+  while (sync.reihenfolge.length) {
+    const id = sync.reihenfolge.shift();
+    if (!sync.erwartet.has(id)) continue;
+    const clients = offeneSyncTeilnehmer(raumcode, eintrag).filter((c) => c.geraetId === id && c.playbackRecovery);
+    if (!clients.length) {
+      syncStatusSetzen(eintrag, id, "error", "Verbindung getrennt");
+      sync.erwartet.delete(id);
+      sync.wartetAuf.delete(id);
+      continue;
+    }
+    sync.aktuell = id;
+    syncStatusSetzen(eintrag, id, "source-search");
+    const daten = JSON.stringify({ ...JSON.parse(sync.vorbereitung),
+      tempo: eintrag.tempo || 1,
+      sequenceId: naechsteNummer(eintrag), at: Date.now(), timestamp: Date.now() });
+    sync.vorbereitung = daten;
+    for (const client of clients) client.send(daten);
+    standSenden(raumcode, eintrag);
+    syncFrist(raumcode, eintrag, FOLGENWECHSEL_BEREIT_FRIST_MS, () => {
+      syncStatusSetzen(eintrag, id, "error", "Quelle oder Video nicht rechtzeitig bereit");
+      sync.erwartet.delete(id);
+      sync.wartetAuf.delete(id);
+      for (const client of offeneSyncTeilnehmer(raumcode, eintrag).filter((c) => c.geraetId === id)) {
+        client.send(JSON.stringify({ type: "syncfailed", key: eintrag.key, syncId: sync.id,
+          reason: "recovery-timeout", recovery: true }));
+      }
+      syncWiederherstellungWeiter(raumcode, eintrag);
+    });
+    return;
+  }
+  // Genau ein Versuch je Teilnehmer. Wer auch jetzt keine Quelle hat, bekommt
+  // keinen Start und loest insbesondere keine weitere automatische Runde aus.
+  sync.mitgliedIds = new Set([...sync.erwartet].filter((id) => sync.status.get(id)?.state === "ready"));
+  if (sync.mitgliedIds.size) syncStarten(raumcode, eintrag);
+  else syncAbschliessen(raumcode, eintrag, "failed", "recovery-failed");
+}
+
+function syncWiederherstellungBeginnen(raumcode, eintrag) {
+  const vorher = eintrag.sync;
+  if (!vorher || vorher.recovery || (vorher.grund !== "episode-change" && !vorher.quelleNoetig)) return false;
+  clearTimeout(eintrag.syncTimer);
+  const alleIds = [...vorher.erwartet].filter((id) => eintrag.members.has(id));
+  const clients = offeneSyncTeilnehmer(raumcode, eintrag);
+  const ids = alleIds.filter((id) => clients.some((c) => c.geraetId === id && c.playbackRecovery));
+  // Die Mitgliedsreihenfolge ist fuer alle Sockets dieselbe, auch nach einem
+  // Wiederanschluss. Der Host und das Wiedergabetempo bleiben am Titel erhalten.
+  const reihenfolge = [...eintrag.members.keys()].filter((id) => ids.includes(id));
+  const id = `sync-${naechsteNummer(eintrag)}`;
+  const jetzt = Date.now();
+  const basis = { ...JSON.parse(vorher.vorbereitung), syncId: id, recovery: true,
+    sequenceId: naechsteNummer(eintrag), at: jetzt, timestamp: jetzt,
+    tempo: eintrag.tempo || 1, hostId: aktuelleHostId(raumcode, eintrag) };
+  const verlassen = JSON.stringify({ ...basis, type: "syncrecover", phase: "leave" });
+  eintrag.sync = { ...vorher, id, recovery: true, phase: "leaving", aktuell: "",
+    wartetAuf: new Set(ids), erwartet: new Set(ids), verlassenAuf: new Set(ids),
+    reihenfolge, verlassen, vorbereitung: JSON.stringify({ ...basis, type: "syncprepare" }),
+    status: new Map(alleIds.map((id) => [id, { name: eintrag.members.get(id),
+      state: ids.includes(id) ? "video-loading" : "error",
+      detail: ids.includes(id) ? "Wiedergabe wird neu verbunden" : "ELFIX fuer automatischen Wiederbeitritt aktualisieren" }])) };
+  const sync = eintrag.sync;
+  for (const id of alleIds) {
+    if (!ids.includes(id)) syncStatusSetzen(eintrag, id, "error", sync.status.get(id).detail);
+    const stand = eintrag.stand?.get(id);
+    // Der ausdrueckliche Reset entwertet auch spaete Herzschlaege des alten
+    // Players, selbst wenn noch kein neuer Player seine Sitzung gemeldet hat.
+    if (stand?.sitzung) stand.alteSitzungen = [...(stand.alteSitzungen || []), stand.sitzung].slice(-8);
+  }
+  for (const client of clients) {
+    if (sync.erwartet.has(client.geraetId) && client.playbackRecovery) client.send(verlassen);
+    else if (sync.status.has(client.geraetId)) syncClientFreigeben(raumcode, eintrag, client, "recovery-unsupported");
+  }
+  standSenden(raumcode, eintrag);
+  if (!ids.length) {
+    syncAbschliessen(raumcode, eintrag, "failed", "recovery-unsupported");
+    return true;
+  }
+  // Schliessen darf nicht so lange dauern wie eine Quellensuche. Wer nicht
+  // bestaetigt, wird fuer diesen einen Lauf ausgeschlossen, nicht entfernt.
+  syncFrist(raumcode, eintrag, SYNC_BEREIT_FRIST_MS, () => {
+    for (const id of sync.verlassenAuf) {
+      syncStatusSetzen(eintrag, id, "error", "Wiedergabe konnte nicht geschlossen werden");
+      sync.erwartet.delete(id);
+      sync.wartetAuf.delete(id);
+      for (const client of offeneSyncTeilnehmer(raumcode, eintrag).filter((c) => c.geraetId === id)) {
+        client.send(JSON.stringify({ type: "syncfailed", key: eintrag.key, syncId: sync.id,
+          reason: "recovery-leave-timeout", recovery: true }));
+      }
+    }
+    sync.verlassenAuf.clear();
+    sync.phase = "rejoining";
+    syncWiederherstellungWeiter(raumcode, eintrag);
+  });
+  return true;
+}
+
+function syncClientFreigeben(raumcode, eintrag, client, reason) {
+  const sync = eintrag.sync;
+  const identitaet = sync.zielIdentitaet;
+  const jetzt = Date.now();
+  client.send(JSON.stringify({ type: "control", key: eintrag.key, action: "pause",
+    position: sync.ziel, videoTime: sync.ziel, playing: false, frameTime: sync.frameTime,
+    url: identitaet.url, at: jetzt, timestamp: jetzt,
+    sequenceId: naechsteNummer(eintrag), syncId: sync.id,
+    episodeId: folgenKennung(identitaet.season, identitaet.episode),
+    hostId: aktuelleHostId(raumcode, eintrag), reason: "sync-timeout" }));
+  client.send(JSON.stringify({ type: "syncfailed", key: eintrag.key, syncId: sync.id, reason,
+    recovery: Boolean(sync.recovery) }));
+}
+
+function syncZeitAbgelaufen(raumcode, eintrag) {
+  if (syncWiederherstellungBeginnen(raumcode, eintrag)) return;
+  const sync = eintrag.sync;
+  if (!sync) return;
+  for (const id of sync.wartetAuf) syncStatusSetzen(eintrag, id, "error", "Video nicht rechtzeitig bereit");
+  for (const client of offeneSyncTeilnehmer(raumcode, eintrag)) {
+    if (sync.status.has(client.geraetId)) syncClientFreigeben(raumcode, eintrag, client, "sync-timeout");
+  }
+  syncAbschliessen(raumcode, eintrag, "failed", "sync-timeout");
+}
+
+function syncQuellenfristSetzen(raumcode, eintrag) {
+  const sync = eintrag.sync;
+  if (!sync || sync.recovery || sync.quelleNoetig) return;
+  sync.quelleNoetig = true;
+  // Einmal ab Beginn der Generation; Status-Herzschlaege koennen die Frist
+  // nicht endlos verlaengern. Nur belegte Quellensuche hebt die kurze Seekfrist an.
+  syncFrist(raumcode, eintrag, Math.max(1, sync.begonnen + FOLGENWECHSEL_BEREIT_FRIST_MS - Date.now()),
+    () => syncZeitAbgelaufen(raumcode, eintrag));
+}
+
+function syncLadestandMelden(raumcode, eintrag, socket, nachricht) {
+  const sync = eintrag?.sync;
+  if (!sync || text(nachricht.syncId, 80) !== sync.id
+    || !sync.erwartet.has(socket.geraetId) || !sync.wartetAuf.has(socket.geraetId)) return;
+  if (sync.recovery && (sync.phase !== "rejoining" || sync.aktuell !== socket.geraetId)) return;
+  const state = text(nachricht.state, 40);
+  if (!["source-search", "confirmation-required", "video-loading", "error"].includes(state)) return;
+  syncStatusSetzen(eintrag, socket.geraetId, state, nachricht.detail);
+  if (["source-search", "confirmation-required", "error"].includes(state)) syncQuellenfristSetzen(raumcode, eintrag);
+  standSenden(raumcode, eintrag);
+}
+
+function syncVerlassenBestaetigen(raumcode, eintrag, socket, nachricht) {
+  const sync = eintrag?.sync;
+  if (!sync?.recovery || sync.phase !== "leaving" || text(nachricht.syncId, 80) !== sync.id
+    || !socket.playbackRecovery
+    || !sync.verlassenAuf.delete(socket.geraetId)) return;
+  syncStatusSetzen(eintrag, socket.geraetId, "left", "Wartet auf erneuten Beitritt");
+  if (!sync.verlassenAuf.size) {
+    sync.phase = "rejoining";
+    syncWiederherstellungWeiter(raumcode, eintrag);
+  } else standSenden(raumcode, eintrag);
+}
+
+function syncBereitMelden(raumcode, eintrag, socket, nachricht) {
+  const sync = eintrag?.sync;
+  if (!sync || text(nachricht.syncId, 80) !== sync.id
+    || !sync.erwartet.has(socket.geraetId) || !sync.wartetAuf.has(socket.geraetId)) return;
+  // Ein noch nicht aufgerufenes Geraet darf weder aus einer alten Player-
+  // Sitzung noch absichtlich die sequenzielle Vorbereitung ueberspringen.
+  if (sync.recovery && (sync.phase !== "rejoining" || sync.aktuell !== socket.geraetId)) return;
+  if (sync.recovery && !socket.playbackRecovery) return;
+  if (nachricht.ok === false) {
+    syncStatusSetzen(eintrag, socket.geraetId, "error", nachricht.detail || "Quelle oder Video konnte nicht geladen werden");
+    if (!sync.recovery && socket.playbackRecovery) {
+      syncQuellenfristSetzen(raumcode, eintrag);
+      standSenden(raumcode, eintrag);
+      return;
+    }
+    sync.erwartet.delete(socket.geraetId);
+    if (!sync.abgesagt) sync.abgesagt = new Set();
+    sync.abgesagt.add(socket.geraetId);
+    syncClientFreigeben(raumcode, eintrag, socket, sync.recovery ? "recovery-failed" : "source-failed");
+  } else syncStatusSetzen(eintrag, socket.geraetId, "ready");
+  sync.wartetAuf.delete(socket.geraetId);
+  if (sync.recovery) syncWiederherstellungWeiter(raumcode, eintrag);
+  else if (!sync.wartetAuf.size) {
+    // Mitglieder im Menue bekommen wie bisher den Start mit, ohne selbst
+    // Bereitschaft melden zu muessen. Nur ausdrueckliche Absagen ausnehmen.
+    if (sync.abgesagt?.size) sync.mitgliedIds = new Set(
+      [...(sync.mitgliedIds || eintrag.members.keys())].filter((id) => !sync.abgesagt.has(id)));
+    if (sync.erwartet.size) syncStarten(raumcode, eintrag);
+    else syncAbschliessen(raumcode, eintrag, "failed", "source-failed");
+  } else standSenden(raumcode, eintrag);
+}
+
 function syncTeilnehmerNachtragen(raumcode, eintrag, socket) {
   if (!eintrag?.sync || !eintrag.sync.vorbereitung
     || socket.raum !== raumcode || socket.readyState !== socket.OPEN
@@ -1652,17 +1896,43 @@ function syncTeilnehmerNachtragen(raumcode, eintrag, socket) {
   // war - und haelt alle uebrigen fest.
   if (eintrag.sync.erwartet instanceof Set
     && !eintrag.sync.erwartet.has(socket.geraetId)) return false;
+  if (eintrag.sync.recovery) {
+    const sync = eintrag.sync;
+    if (!socket.playbackRecovery) {
+      syncClientFreigeben(raumcode, eintrag, socket, "recovery-unsupported");
+      return false;
+    }
+    if (sync.phase === "leaving" && sync.verlassenAuf.has(socket.geraetId)) socket.send(sync.verlassen);
+    else if (sync.phase === "rejoining" && sync.aktuell === socket.geraetId) socket.send(sync.vorbereitung);
+    standSenden(raumcode, eintrag);
+    return true;
+  }
   eintrag.sync.wartetAuf.add(socket.geraetId);
+  syncStatusSetzen(eintrag, socket.geraetId, "video-loading");
   socket.send(eintrag.sync.vorbereitung);
   return true;
 }
 
-function syncTeilnehmerEntfernen(raumcode, eintrag, geraetId, alterSocket = null) {
+function syncTeilnehmerEntfernen(raumcode, eintrag, geraetId, alterSocket = null, echterAbgang = false) {
   if (!eintrag?.sync || !geraetId) return;
   const gleicheVerbindung = offeneSyncTeilnehmer(raumcode, eintrag)
     .some((client) => client !== alterSocket && client.geraetId === geraetId);
   if (gleicheVerbindung) return;
+  const sync = eintrag.sync;
+  if (sync.recovery || echterAbgang || !eintrag.members.has(geraetId)) sync.erwartet?.delete(geraetId);
   eintrag.sync.wartetAuf.delete(geraetId);
+  syncStatusSetzen(eintrag, geraetId, "left", "Teilnehmer hat die Wiedergabe verlassen");
+  if (sync.recovery) {
+    sync.verlassenAuf.delete(geraetId);
+    if (sync.phase === "leaving" && !sync.verlassenAuf.size) {
+      sync.phase = "rejoining";
+      syncWiederherstellungWeiter(raumcode, eintrag);
+    } else if (sync.phase === "rejoining" && sync.aktuell === geraetId) {
+      syncWiederherstellungWeiter(raumcode, eintrag);
+    }
+    standSenden(raumcode, eintrag);
+    return;
+  }
   // Start nur, wenn mindestens ein eingetretener Teilnehmer noch wirklich
   // verbunden ist. In einen leeren Raum startet das Relay kein Video.
   if (!eintrag.sync.wartetAuf.size
@@ -1682,6 +1952,7 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId, optionen = {}) {
   // dass nur Android einen Bruchteil auf ein benachbartes Bild rundet.
   ziel = frameTime ?? Math.round(ziel * 1000) / 1000;
   clearTimeout(eintrag.syncTimer);
+  eintrag.syncAbschluss = null;
   // Nur wer diese Folge gerade wirklich im Player hat, kann sie fuer den
   // Start vorbereiten. Ein verbundenes Handy im Menue oder auf einer anderen
   // Folge darf die Runde nicht fuenf Sekunden lang blockieren. Der Ausloeser
@@ -1699,6 +1970,7 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId, optionen = {}) {
           .map((teilnehmer) => teilnehmer.geraetId)
       );
   aktiveIds.add(userId);
+  for (const id of aktiveIds) eintrag.playbackAusgeschlossen?.delete(id);
   const mitglieder = offeneSyncTeilnehmer(raumcode, eintrag)
     .filter((client) => aktiveIds.has(client.geraetId));
   const syncId = `sync-${naechsteNummer(eintrag)}`;
@@ -1718,6 +1990,8 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId, optionen = {}) {
   }
 
   const jetzt = Date.now();
+  const zielIdentitaet = { url: eintrag.live.url,
+    season: eintrag.season || 0, episode: eintrag.episode || 0 };
   const daten = JSON.stringify({
     type: "syncprepare",
     key: eintrag.key,
@@ -1739,12 +2013,17 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId, optionen = {}) {
   eintrag.sync = {
     id: syncId,
     ziel,
+    zielIdentitaet,
     frameTime,
     // Wofuer diese Schranke da ist. Nur der Folgenwechsel laesst jeden Player
     // eine neue Quelle laden - und nur dort ist alles, was er in der Zeit von
     // sich meldet, der Nachhall dieses Ladens (siehe die Echo-Sperre in der
     // Steuerung).
     grund: String(optionen.grund || ""),
+    begonnen: jetzt,
+    phase: "preparing",
+    status: new Map(mitglieder.map((client) => [client.geraetId,
+      { name: eintrag.members.get(client.geraetId) || client.name, state: "source-search", detail: "" }])),
     /*
      * Und wohin sie fuehrt.
      *
@@ -1769,29 +2048,8 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId, optionen = {}) {
   standSenden(raumcode, eintrag);
   zustandSenden(raumcode);
 
-  // Ein Verbindungsabbruch waehrend des Pufferns ist kein Grund, die uebrigen
-  // unvorbereitet loszuschicken. Der naechste Play startet einen frischen Lauf.
-  eintrag.syncTimer = setTimeout(() => {
-    if (!eintrag.sync || eintrag.sync.id !== syncId) return;
-    eintrag.sync = null;
-    eintrag.syncTimer = null;
-    const jetzt = Date.now();
-    const pause = JSON.stringify({ type: "control", key: eintrag.key,
-      action: "pause", position: ziel, videoTime: ziel, playing: false,
-      frameTime,
-      url: eintrag.live?.url || eintrag.url, at: jetzt, timestamp: jetzt,
-      sequenceId: naechsteNummer(eintrag), syncId,
-      episodeId: folgenKennung(eintrag.season, eintrag.episode),
-      hostId: aktuelleHostId(raumcode, eintrag), reason: "sync-timeout" });
-    for (const client of offeneSyncTeilnehmer(raumcode, eintrag)) {
-      if (optionen.mitgliedIds instanceof Set && !aktiveIds.has(client.geraetId)) continue;
-      // Clear pending start controls too, including clients that reconnected
-      // while this generation was seeking or loading.
-      client.send(pause);
-      client.send(JSON.stringify({ type: "syncfailed", key: eintrag.key, syncId }));
-    }
-  }, optionen.fristMs || SYNC_BEREIT_FRIST_MS);
-  eintrag.syncTimer.unref?.();
+  syncFrist(raumcode, eintrag, optionen.fristMs || SYNC_BEREIT_FRIST_MS,
+    () => syncZeitAbgelaufen(raumcode, eintrag));
 }
 
 /**
@@ -1801,12 +2059,12 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId, optionen = {}) {
  * Ende der Schranke. Der Unterschied steht im Grund - hier ist nichts
  * schiefgegangen, die Runde war schlicht angehalten und bleibt es.
  */
-function syncEndePausiert(raumcode, eintrag, { syncId, ziel, frameTime, mitgliedIds }) {
+function syncEndePausiert(raumcode, eintrag, { syncId, ziel, frameTime, mitgliedIds, zielIdentitaet }) {
   const jetzt = Date.now();
   eintrag.startAt = 0;
   eintrag.startBestaetigt = true;
   eintrag.live = { action: "pause", position: ziel, frameTime,
-    url: eintrag.live?.url || eintrag.url, at: jetzt };
+    url: zielIdentitaet.url, at: jetzt };
   eintrag.pauseAusgerichtet = true;
   if (eintrag.letzteAktion) eintrag.letzteAktion = { ...eintrag.letzteAktion, type: "pause", timestamp: jetzt };
   const pause = JSON.stringify({
@@ -1817,7 +2075,8 @@ function syncEndePausiert(raumcode, eintrag, { syncId, ziel, frameTime, mitglied
     episodeId: folgenKennung(eintrag.season, eintrag.episode),
     hostId: aktuelleHostId(raumcode, eintrag), reason: "sync-pausiert"
   });
-  const ende = JSON.stringify({ type: "syncfailed", key: eintrag.key, syncId });
+  const ende = JSON.stringify({ type: "syncfailed", key: eintrag.key, syncId,
+    reason: "sync-pausiert", recovery: Boolean(eintrag.syncAbschluss?.recovery) });
   for (const client of wss.clients) {
     if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
     if (!eintrag.members.has(client.geraetId)) continue;
@@ -1840,12 +2099,32 @@ function syncEndePausiert(raumcode, eintrag, { syncId, ziel, frameTime, mitglied
 // abgegeben hat.
 function syncStarten(raumcode, eintrag) {
   if (!eintrag?.sync) return;
+  const zielIdentitaet = eintrag.sync.zielIdentitaet;
+  // Quelle und Folgenkennung stammen aus derselben angenommenen Generation.
+  // Ein spaeter Metadatennachtrag darf kein e2-Video als s1e1 freigeben.
+  Object.assign(eintrag, zielIdentitaet);
   const syncId = eintrag.sync.id;
   const ziel = eintrag.sync.ziel;
   const frameTime = eintrag.sync.frameTime;
   const mitgliedIds = eintrag.sync.mitgliedIds;
   const zielLaufend = eintrag.sync.zielLaufend !== false;
+  const recovery = Boolean(eintrag.sync.recovery);
+  if (recovery) {
+    if (!eintrag.playbackAusgeschlossen) eintrag.playbackAusgeschlossen = new Set();
+    for (const [id, wert] of eintrag.sync.status) {
+      if (wert.state === "ready") eintrag.playbackAusgeschlossen.delete(id);
+      else eintrag.playbackAusgeschlossen.add(id);
+    }
+    // Ein Host ohne Quelle darf den gelungenen Neustart nicht mit seinem
+    // alten Pause-Herzschlag wieder anhalten. Sonst behaelt er die Rolle.
+    if (!mitgliedIds.has(eintrag.hostId)) {
+      eintrag.hostId = [...mitgliedIds][0] || "";
+      eintrag.hostGesehen = Date.now();
+    }
+  }
   clearTimeout(eintrag.syncTimer);
+  eintrag.syncTimer = null;
+  eintrag.syncAbschluss = { ...syncStand(eintrag), phase: "ready", currentMemberId: "" };
   eintrag.sync = null;
   // Eine angehaltene Runde bleibt angehalten. Alle stehen jetzt auf derselben
   // Stelle - genau das war die Aufgabe -, und der Wunsch der Runde war nie ein
@@ -1853,7 +2132,8 @@ function syncStarten(raumcode, eintrag) {
   // Pause auf der Zielstelle: sie beendet das Warten auf allen Geraeten und
   // laesst die Bedienung wieder frei.
   if (!zielLaufend) {
-    syncEndePausiert(raumcode, eintrag, { syncId, ziel, frameTime, mitgliedIds });
+    syncEndePausiert(raumcode, eintrag, { syncId, ziel, frameTime, mitgliedIds, zielIdentitaet });
+    if (recovery) zustandSenden(raumcode);
     return;
   }
   // Nach dem letzten "bereit" braucht jeder noch denselben kurzen Vorlauf,
@@ -1863,7 +2143,7 @@ function syncStarten(raumcode, eintrag) {
   const jetzt = Date.now();
   const startAt = jetzt + START_VORLAUF_MS;
   eintrag.startAt = startAt;
-  eintrag.live = { action: "play", position: ziel, url: eintrag.live?.url || eintrag.url, at: startAt };
+  eintrag.live = { action: "play", position: ziel, url: zielIdentitaet.url, at: startAt };
   eintrag.pauseAusgerichtet = false;
   // Ausgesprochen ist er - angekommen noch nicht. Bis der Host sich einmal
   // laufend meldet, ist jedes "pausiert" aus der Runde Vorbereitung.
@@ -1914,6 +2194,7 @@ function syncStarten(raumcode, eintrag) {
     standFuerAlle(eintrag, ziel, false);
   }
   standSenden(raumcode, eintrag);
+  if (recovery) zustandSenden(raumcode);
 }
 
 wss.on("connection", (socket) => {
@@ -2038,6 +2319,8 @@ wss.on("connection", (socket) => {
       socket.raum = codeNormalisieren(nachricht.room);
       socket.name = text(nachricht.name, 40) || "Gerät";
       socket.geraetId = identitaet.geraetId;
+      socket.playbackRecovery = Array.isArray(nachricht.capabilities)
+        && nachricht.capabilities.includes("playback-recovery-v1");
       // Das Konto - alle Geraete einer Person unter einer Kennung.
       //
       // Es ist nicht die Kennung des Geraeteabgleichs, sondern ein HMAC
@@ -2204,7 +2487,15 @@ wss.on("connection", (socket) => {
         archived: false,
         progress: null
       };
-      if (bekannt) Object.assign(gespeichert, eintrag);
+      if (bekannt) {
+        // Share traegt Metadaten nach. Eine offene Startgeneration bestimmt
+        // ihre Zielfolge bereits; ein Restore ist auch danach keine neue
+        // Folgenwahl. Absichtliche Folgenwechsel kommen ueber navigate.
+        const rundenZiel = bekannt.sync?.zielIdentitaet || (nachricht.restore
+          ? { url: bekannt.url, season: bekannt.season, episode: bekannt.episode } : null);
+        Object.assign(gespeichert, eintrag);
+        if (rundenZiel) Object.assign(gespeichert, rundenZiel);
+      }
       // Dieselbe Trennung wie beim Grabstein, eine Zeile darueber: ein
       // Nachtrag laesst einen archivierten Titel archiviert - sonst holte ihn
       // jedes Geraet, das sich verbindet, ungefragt zurueck in die Runde. Wer
@@ -2250,6 +2541,7 @@ wss.on("connection", (socket) => {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag) return;
       if (nachricht.type === "enter") {
+        eintrag.playbackAusgeschlossen?.delete(socket.geraetId);
         const warMitglied = eintrag.members.has(socket.geraetId);
         eintrag.members.set(socket.geraetId, socket.name);
         vorgaengerAufraeumen(socket.raum, eintrag, socket);
@@ -2302,6 +2594,10 @@ wss.on("connection", (socket) => {
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
       const aktion = text(nachricht.action, 10);
       if (!["play", "pause", "seek", "skip", "navigate", "tempo", "fassung"].includes(aktion)) return;
+      if (eintrag.playbackAusgeschlossen?.has(socket.geraetId)) {
+        if (aktion !== "navigate") return;
+        eintrag.playbackAusgeschlossen.delete(socket.geraetId);
+      }
 
       let ziel = httpAdresse(nachricht.url);
       const istHost = socket.geraetId === aktuelleHostId(socket.raum, eintrag);
@@ -2314,9 +2610,7 @@ wss.on("connection", (socket) => {
       const offeneStartverabredungAbbrechen = (pauseSenden = false) => {
         if (!eintrag.sync) return;
         const offene = eintrag.sync;
-        clearTimeout(eintrag.syncTimer);
-        eintrag.sync = null;
-        eintrag.syncTimer = null;
+        syncAbschliessen(socket.raum, eintrag, "cancelled", "control-cancelled");
         if (!pauseSenden) return;
 
         // Ein Fassungswechsel laedt die Quelle neu und macht jede bereits
@@ -2456,7 +2750,9 @@ wss.on("connection", (socket) => {
        * gemeinsamen Starts. Sprung, Folgenwechsel und Intro-Skip laufen
        * ohnehin unveraendert weiter.
        */
-      if (eintrag.sync?.grund === "episode-change"
+      if (eintrag.sync?.recovery && eintrag.sync.status.has(socket.geraetId)
+        && ["play", "pause", "seek"].includes(aktion)) return;
+      if ((eintrag.sync?.grund === "episode-change" || eintrag.sync?.quelleNoetig)
         && eintrag.sync.wartetAuf instanceof Set
         && eintrag.sync.wartetAuf.has(socket.geraetId)
         && Math.abs(eigen - eintrag.sync.ziel) < 5
@@ -2568,7 +2864,8 @@ wss.on("connection", (socket) => {
           // sender-only syncstart duerfte diese echte Schranke nicht vorzeitig
           // ueberholen.
           if (eintrag.sync?.vorbereitung && eintrag.sync.erwartet?.has(socket.geraetId)) {
-            socket.send(eintrag.sync.vorbereitung);
+            if (eintrag.sync.recovery) syncTeilnehmerNachtragen(socket.raum, eintrag, socket);
+            else socket.send(eintrag.sync.vorbereitung);
             return;
           }
           const host = aktuellerHost(socket.raum, eintrag);
@@ -2879,9 +3176,8 @@ wss.on("connection", (socket) => {
       // Kein offener Gleichzieh-Vorgang mehr: es wird nichts nachgestartet,
       // also wartet auch niemand auf eine Bereitmeldung. Ein stehengebliebenes
       // `sync` haette ausserdem die Driftmessung dauerhaft abgeschaltet.
-      eintrag.sync = null;
-      clearTimeout(eintrag.syncTimer);
-      eintrag.syncTimer = null;
+      if (eintrag.sync) syncAbschliessen(socket.raum, eintrag, "cancelled", "syncall");
+      eintrag.syncAbschluss = null;
 
       // Beim Vorbereiten halten alle an und stellen sich auf dieselbe Stelle.
       // Es wird also nichts hochgerechnet - `playing` ist falsch, und die
@@ -2926,6 +3222,7 @@ wss.on("connection", (socket) => {
     if (nachricht.type === "here") {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
+      if (eintrag.playbackAusgeschlossen?.has(socket.geraetId)) return;
       // Ein Geraet hat genau einen aktuell offenen Player. Sobald es Titel B
       // meldet, darf keine Freigabe- oder Unbekannt-Markierung aus Titel A
       // weiter in dessen Spoilerschutz eingehen.
@@ -3421,54 +3718,23 @@ wss.on("connection", (socket) => {
       // standen. `leave` und `kick` raeumen dort seit jeher auf; `bye` war
       // der einzige Weg aus einer Folge, der es nicht tat. Der eigene Socket
       // zaehlt dabei nicht mehr mit: er ist noch im Raum, aber ohne Player.
-      syncTeilnehmerEntfernen(socket.raum, eintrag, socket.geraetId, socket);
+      syncTeilnehmerEntfernen(socket.raum, eintrag, socket.geraetId, socket, true);
       zustandSenden(socket.raum);
       standSenden(socket.raum, eintrag);
       spoilerStandSenden(socket.raum, eintrag);
       return;
     }
 
-    if (nachricht.type === "syncready") {
+    if (["syncready", "syncstatus", "syncrecoverleft", "synccancel"].includes(nachricht.type)) {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
-      if (!eintrag?.sync) return;
-      // Eine Bereitmeldung aus dem abgebrochenen oder vorherigen Lauf darf
-      // keinen neuen Start ausloesen. Die Kennung wird mit syncprepare
-      // ausgegeben und mit syncstart wiederholt.
-      if (text(nachricht.syncId, 80) !== eintrag.sync.id) return;
-      // `ok: false` ist eine Absage: dieses Geraet bekommt die neue Folge nicht
-      // auf (kein Hoster, keine Quelle, Player zu). Ohne sie hing die ganze
-      // Runde die volle Frist in "Warten auf alle", obwohl feststand, dass die
-      // Bereitmeldung nie kommt. Fuer die Wartemenge zaehlt beides gleich; wer
-      // absagt, gehoert danach auch nicht mehr zu dieser Schranke.
-      if (nachricht.ok === false) {
-        eintrag.sync.erwartet?.delete(socket.geraetId);
-        // Und er wird freigegeben.
-        //
-        // Er bekommt keinen gemeinsamen Start mehr - er gehoert nicht mehr zu
-        // dieser Schranke. Erfaehrt er aber gar nichts, wartet sein Player
-        // weiter auf einen Start, den es fuer ihn nie gibt: die Bedienung
-        // bleibt gesperrt, der Play-Knopf tut nichts, entpausieren geht nicht.
-        // Gemeldet als "nach dem Folgenwechsel buggt der Play-Knopf rum".
-        //
-        // Geschickt wird genau das, was auch der Fristablauf schickt: eine
-        // Pause ohne Bereitschaftsanforderung und das Ende der Schranke. Beides
-        // kennt jeder Client schon.
-        const frei = Date.now();
-        socket.send(JSON.stringify({
-          type: "control", key: eintrag.key, action: "pause",
-          position: eintrag.sync.ziel, videoTime: eintrag.sync.ziel, playing: false,
-          frameTime: eintrag.sync.frameTime,
-          url: eintrag.live?.url || eintrag.url, at: frei, timestamp: frei,
-          sequenceId: naechsteNummer(eintrag), syncId: eintrag.sync.id,
-          episodeId: folgenKennung(eintrag.season, eintrag.episode),
-          hostId: aktuelleHostId(socket.raum, eintrag), reason: "sync-timeout"
-        }));
-        socket.send(JSON.stringify({
-          type: "syncfailed", key: eintrag.key, syncId: eintrag.sync.id
-        }));
+      if (!eintrag?.members.has(socket.geraetId)) return;
+      if (nachricht.type === "syncready") syncBereitMelden(socket.raum, eintrag, socket, nachricht);
+      else if (nachricht.type === "syncstatus") syncLadestandMelden(socket.raum, eintrag, socket, nachricht);
+      else if (nachricht.type === "syncrecoverleft") syncVerlassenBestaetigen(socket.raum, eintrag, socket, nachricht);
+      else if (eintrag.sync?.id === text(nachricht.syncId, 80)
+        && eintrag.sync.erwartet.has(socket.geraetId)) {
+        syncAbschliessen(socket.raum, eintrag, "cancelled", "user-cancelled");
       }
-      eintrag.sync.wartetAuf.delete(socket.geraetId);
-      if (!eintrag.sync.wartetAuf.size) syncStarten(socket.raum, eintrag);
       return;
     }
 
@@ -3476,6 +3742,7 @@ wss.on("connection", (socket) => {
     if (nachricht.type === "resync") {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
+      if (eintrag.playbackAusgeschlossen?.has(socket.geraetId)) return;
       const stand = hostZustandJetzt(socket.raum, eintrag);
       // Nur wenn vom Host wirklich nichts bekannt ist, bleibt die Antwort aus.
       // Steht er am Anfang der Folge, ist 0 die richtige Auskunft.
@@ -3539,6 +3806,7 @@ wss.on("connection", (socket) => {
     // Fortschritt zaehlt nur von Beigetretenen und geht nur an Beigetretene.
     if (nachricht.type === "progress") {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
+      if (eintrag?.playbackAusgeschlossen?.has(socket.geraetId)) return;
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
       const fortschritt = fortschrittSaeubern(nachricht.progress);
       if (!fortschritt) return;

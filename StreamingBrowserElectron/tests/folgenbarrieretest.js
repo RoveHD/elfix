@@ -28,6 +28,7 @@ async function pruefen() {
     taste, console, watchpartySync: sync, Date,
     spielerLauf: { id: 1, url: folge(1) }, spielerTakt: { stelle: 120 },
     spielerSyncBereit: null, spielerFolgenVorbereitung: null,
+    spielerVorbereitungMelden() {},
     spielerAnbieter: () => ({ id: "aniworld" }),
     spielerBefehl: befehl => befehle.push(befehl),
     istGleicheFolge: (a, b) => a === b,
@@ -141,6 +142,8 @@ async function pruefen() {
     spielerLauf: { id: 8, url: folge(1) },
     providerViews: new Map(),
     watchpartyLetztesEreignis: new Map(),
+    spielerLadeSchranke: null, spielerWiederherstellung: null, spielerVorbereitungsAnzeige: null,
+    spielerWiederherstellungsGeneration: 0, spielerVorbereitungSenden() {},
     aktiverWatchpartyRaum: () => eintrag.room,
     watchpartyEintrag: () => ({ ...eintrag, hostId: "host", myId: "gast" }),
     episodeIdentity: (url) => {
@@ -185,6 +188,9 @@ async function pruefen() {
   let raceLadenBeenden;
   const race = vm.createContext({
     taste, console, watchpartySync: sync, Date,
+    spielerLadeSchranke: null, spielerWiederherstellung: null, spielerVorbereitungsAnzeige: null,
+    spielerWiederherstellungsGeneration: 0, spielerVorbereitungSenden() {}, spielerVorbereitungMelden() {},
+    sanitizePositiveNumber: wert => Math.max(0, Number(wert) || 0),
     spielerLauf: { id: 20, url: folge(1) },
     spielerTakt: { stelle: 0, laeuft: false, puffert: false, at: Date.now() },
     spielerSyncBereit: null, spielerFolgenVorbereitung: null,
@@ -260,6 +266,8 @@ async function pruefen() {
   const webView = { webContents: { getURL: () => webUrl } };
   const webDispatch = vm.createContext({
     taste, console, watchpartySync: sync, Date, setTimeout, Promise,
+    spielerLadeSchranke: null, spielerWiederherstellung: null, spielerVorbereitungsAnzeige: null,
+    spielerWiederherstellungsGeneration: 0, spielerVorbereitungSenden() {},
     spielerLauf: null,
     providerViews: new Map([["aniworld", webView]]),
     watchpartyLetztesEreignis: new Map(),

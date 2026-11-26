@@ -312,6 +312,22 @@ class WatchpartyRaeume {
     for (const raum of this.raeumeMitTitel(key, room)) raum.bereitZumStart(key, syncId, ok);
   }
 
+  vorbereitungsStatus(key, room, syncId, state, detail = "") {
+    for (const raum of this.raeumeMitTitel(key, room)) raum.vorbereitungsStatus(key, syncId, state, detail);
+  }
+
+  ladezustandMelden(room, key, syncId, state, detail = "") {
+    this.vorbereitungsStatus(key, room, syncId, state, detail);
+  }
+
+  wiederherstellungVerlassen(key, room, syncId) {
+    for (const raum of this.raeumeMitTitel(key, room)) raum.wiederherstellungVerlassen(key, syncId);
+  }
+
+  wiederherstellungAbbrechen(key, room, syncId) {
+    for (const raum of this.raeumeMitTitel(key, room)) raum.wiederherstellungAbbrechen(key, syncId);
+  }
+
   fortschrittMelden(key, fortschritt, room) {
     for (const raum of this.raeumeMitTitel(key, room)) raum.fortschrittMelden(key, fortschritt);
   }

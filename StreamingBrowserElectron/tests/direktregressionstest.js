@@ -26,6 +26,8 @@ function kontext(werte, namen, text = haupt) {
   // weitere Seitengrenze des Harnesses, keine Aufgabe der getesteten Logik.
   const stand = vm.createContext({ console: still, AbortController, AbortSignal, URL,
     folgenWerkbaenkeSchliessen() {},
+    spielerWiederherstellungAbbrechen() {}, spielerVorbereitungSenden() {}, spielerVorbereitungQuelleBereit() {},
+    spielerLadeSchranke: null, spielerVorbereitungsAnzeige: null,
     merkeGeoeffneteFolge() {},
     direktFallbackStarten() { return null; }, direktFallbackErfolg() {},
     spielerMiniAktiv: false, spielerLauf: null, geraeteWiedergabeMelden() {}, spielerCfAbbrechen() {},
@@ -472,7 +474,7 @@ function playerKontext() {
     wechseln: async () => ({ ok: true }) }, { get: (objekt, key) => objekt[key] || (() => {}) });
   const vorschau = { erstellen: () => ({ quelle() {}, zeigen: async () => ({}), verbergen() {}, zerstoeren() {} }) };
   const c = vm.createContext({ window: { elfixSpieler: bruecke, ElfixSpielerVorschau: vorschau, ElfixUntertitelwahl: require("../src/untertitelwahl"), addEventListener() {} }, navigator: {}, console: still, Date, Event,
-    document: { getElementById: element, createElement: () => element(Symbol()), addEventListener() {} },
+    performance, document: { getElementById: element, createElement: () => element(Symbol()), addEventListener() {} },
     setTimeout: () => ++timerId, clearTimeout() {},
     setInterval: (fn) => { const id = ++timerId; intervalle.set(id, fn); return id; }, clearInterval: (id) => intervalle.delete(id)
   });

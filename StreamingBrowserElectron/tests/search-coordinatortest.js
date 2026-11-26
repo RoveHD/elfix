@@ -106,6 +106,48 @@ async function json(url, signal) {
     });
     check("fehlerhafte Cache-Regel laesst wartende Suche antworten", predicateResult === "antwort");
     check("fehlerhafte Cache-Regel schreibt nichts", coordinator.stats().cached === 2);
+
+    const progress = createSearchCoordinator();
+    let publish, finish, runs = 0;
+    const updatesA = [], updatesB = [];
+    const execute = (_signal, report) => {
+      runs += 1;
+      publish = report;
+      return new Promise(resolve => { finish = resolve; });
+    };
+    const pendingA = progress.request({ key: "shared", owner: "a", execute, onProgress: value => updatesA.push(value) });
+    await Promise.resolve();
+    publish(["fast"]);
+    const pendingB = progress.request({ key: "shared", owner: "b", execute, onProgress: value => updatesB.push(value) });
+    check("fertige Treffer sind vor dem Ende verfuegbar und werden spaeten Mitbenutzern nachgereicht",
+      updatesA.length === 1 && updatesB.length === 1 && updatesB[0][0] === "fast" && runs === 1);
+    progress.cancel("a");
+    await assert.rejects(pendingA, error => error.name === "AbortError");
+    publish(["fast", "slow"]);
+    check("abgemeldeter Besitzer bekommt keine weiteren Teilergebnisse", updatesA.length === 1 && updatesB.length === 2);
+    finish(["fast", "slow"]);
+    await pendingB;
+    publish(["too late"]);
+    check("nach Suchende werden keine Zwischenstaende mehr verteilt", updatesB.length === 2);
+
+    let cancelledPublish, cancelledFinish;
+    const cancelledUpdates = [];
+    const stopped = progress.request({ key: "cancelled", owner: "c", execute: (_signal, report) => {
+      cancelledPublish = report;
+      return new Promise(resolve => { cancelledFinish = resolve; });
+    }, onProgress: value => cancelledUpdates.push(value) });
+    await Promise.resolve();
+    progress.cancel("c");
+    await assert.rejects(stopped, error => error.name === "AbortError");
+    cancelledPublish(["stale"]);
+    cancelledFinish([]);
+    check("abgebrochene Provider koennen keine spaeten Treffer verteilen", cancelledUpdates.length === 0);
+
+    const broken = progress.request({ key: "broken-ui", owner: "d", execute: async (_signal, report) => {
+      report(["usable"]);
+      return ["usable"];
+    }, onProgress: () => { throw new Error("Fenster geschlossen"); } });
+    check("defekter Fortschrittslistener verwirft keine Treffer", (await broken)[0] === "usable");
   } finally {
     await remote.close();
   }

@@ -34,7 +34,7 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
   /** Wo der Film steht. Geht im Takt hinaus, nicht bei jedem Bild. */
   stand: (stand) => ipcRenderer.send("spieler:stand", stand),
   /** Etwas ist schiefgegangen - mit Text, den ein Mensch lesen kann. */
-  fehler: (text) => ipcRenderer.send("spieler:fehler", String(text || "")),
+  fehler: (text, auftragId) => ipcRenderer.send("spieler:fehler", String(text || ""), auftragId),
   /** Zu. `grund` steht danach im Protokoll. */
   schliessen: (grund) => ipcRenderer.send("spieler:schliessen", String(grund || "")),
   /** Vollbild an oder aus - das Fenster gehoert dem Hauptprozess. */
@@ -118,6 +118,10 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
   /** Das Tempo der Runde, hereingereicht - der Player setzt es und zeigt es an. */
   aufTempo: (rueckruf) => ipcRenderer.on("spieler:rundentempo", (_ereignis, wert, binHost) => rueckruf(wert, binHost)),
   aufSteuern: (rueckruf) => ipcRenderer.on("spieler:steuern", (_ereignis, befehl) => rueckruf(befehl)),
+  /** Quelle suchen / Wiederverbindung je Teilnehmer. */
+  aufVorbereitung: (rueckruf) => ipcRenderer.on("spieler:vorbereitung", (_ereignis, wert) => rueckruf(wert)),
+  VorbereitungAbbrechen: (syncId) => ipcRenderer.send("spieler:vorbereitung-abbrechen", String(syncId || "")),
+  neustartBereit: (syncId) => ipcRenderer.send("spieler:neustart-bereit", String(syncId || "")),
   /** Wer sonst noch bei dieser Folge sitzt - Name, Zeichen, Uhr. */
   aufLeiste: (rueckruf) => ipcRenderer.on("spieler:leiste", (_ereignis, leute) => rueckruf(leute)),
   /** Der Chat bleibt im Hauptprozess; die Playerseite bekommt nur Textzeilen. */

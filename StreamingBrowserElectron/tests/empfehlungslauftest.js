@@ -308,6 +308,108 @@ function umgebungBauen(grenzen) {
       ziel.title);
   }
 
+  // Ein gespeicherter, veralteter Pool muss auch beim ERSTEN Aufruf sofort
+  // kommen. Die blockierten Netzabrufe erlauben keine zufaellige Reihenfolge.
+  {
+    const { umgebung, zustand } = umgebungBauen({ poolGroesse: 40 });
+    const gespeichert = [{
+      title: "Gespeicherter Vorschlag", url: WIRT + "/anime/stream/gespeichert",
+      providerId: "test", werkKey: "gespeichert", grundText: "Aus dem letzten Lauf"
+    }];
+    zustand.cache.personal = { at: 0, signatur: "veraltet", items: gespeichert };
+    let freigeben;
+    const sperre = new Promise((resolve) => { freigeben = resolve; });
+    let angefangen = 0;
+    umgebung.holen = async (adresse) => {
+      angefangen += 1;
+      await sperre;
+      return seiteFuer(adresse);
+    };
+    const lauf = empfehlungslauf.erstellen(umgebung);
+    let ersteAntwort;
+    let zweiteAntwort;
+    let expliziteAntwort;
+    const erste = lauf.persoenlich(24, false).then((items) => { ersteAntwort = items; });
+    const zweite = lauf.persoenlich(24, false).then((items) => { zweiteAntwort = items; });
+    const explizit = lauf.persoenlich(24, true).then((items) => { expliziteAntwort = items; });
+    await new Promise(setImmediate);
+    pruefe("G1 erster Zugriff liefert alten Pool waehrend die Abrufe warten",
+      ersteAntwort?.[0]?.werkKey === "gespeichert");
+    pruefe("G2 gleichzeitige Reihen teilen einen Hintergrundlauf",
+      zweiteAntwort?.[0]?.werkKey === "gespeichert" && angefangen === 4, `${angefangen} begonnene Abrufe`);
+    pruefe("G3 explizites Neuberechnen wartet auf das Ergebnis", expliziteAntwort === undefined);
+    freigeben();
+    await Promise.all([erste, zweite, explizit]);
+    pruefe("G4 fertiger Hintergrundlauf meldet sich genau einmal", zustand.gemeldet === 1,
+      `${zustand.gemeldet} Meldung`);
+    pruefe("G5 expliziter Aufruf liefert fertige Vorschlaege",
+      expliziteAntwort.length > 0 && !expliziteAntwort.some((item) => item.werkKey === "gespeichert"));
+    const fertig = await lauf.persoenlich(24, false);
+    pruefe("G6 erneuter Zugriff sieht den erneuerten gespeicherten Pool",
+      fertig[0]?.werkKey === expliziteAntwort[0]?.werkKey
+        && zustand.cache.personal.items[0]?.werkKey === fertig[0]?.werkKey);
+  }
+
+  // Der Verlauf kann sich waehrend einer freigegebenen Ereignisrunde aendern.
+  // Ein altes Ergebnis darf dann nicht mit der neuen Signatur gueltig werden.
+  {
+    const { umgebung, zustand } = umgebungBauen({ poolGroesse: 40 });
+    let eintraege = ABLAGE.map((item) => ({ ...item }));
+    umgebung.eintraege = () => eintraege;
+    const lauf = empfehlungslauf.erstellen(umgebung);
+    await lauf.persoenlich(24, true);
+    const vorher = zustand.cache.personal.signatur;
+    const E = require("../src/empfehlung");
+    const original = E.empfehlenAsync;
+    let freigeben;
+    let angefangen;
+    const sperre = new Promise((resolve) => { freigeben = resolve; });
+    const amRanking = new Promise((resolve) => { angefangen = resolve; });
+    E.empfehlenAsync = async (...args) => {
+      angefangen();
+      await sperre;
+      return original(...args);
+    };
+    try {
+      const ergebnis = lauf.persoenlich(24, true);
+      await amRanking;
+      eintraege = eintraege.map((item, i) => i === 0 ? { ...item, favorite: true } : item);
+      freigeben();
+      await ergebnis;
+      pruefe("H1 laufende Rechnung behaelt die Signatur ihres Ausgangsprofils",
+        zustand.cache.personal.signatur === vorher);
+    } finally {
+      E.empfehlenAsync = original;
+      freigeben();
+    }
+    await lauf.persoenlich(24, true);
+    pruefe("H2 naechste Rechnung verwendet den geaenderten Verlauf",
+      zustand.cache.personal.signatur !== vorher);
+  }
+
+  // Ein fehlgeschlagener Hintergrundlauf darf keine Meldung ausloesen, die
+  // im Renderer sofort denselben defekten Lauf erneut starten wuerde.
+  {
+    const { umgebung, zustand } = umgebungBauen({ poolGroesse: 40 });
+    zustand.cache.personal = { at: 0, signatur: "alt", items: [
+      { title: "Gespeichert", url: WIRT + "/anime/stream/alt", werkKey: "alt" }
+    ] };
+    const E = require("../src/empfehlung");
+    const original = E.empfehlenAsync;
+    let versuche = 0;
+    E.empfehlenAsync = async () => { versuche += 1; throw new Error("Gestellter Rechenfehler"); };
+    try {
+      const lauf = empfehlungslauf.erstellen(umgebung);
+      await lauf.persoenlich(24, false);
+      // Der explizite Aufruf wartet denselben Hintergrundlauf ab.
+      const ersatz = await lauf.persoenlich(24, true);
+      pruefe("I1 Rechenfehler behaelt gespeicherte Vorschlaege", ersatz[0]?.werkKey === "alt");
+      pruefe("I2 Rechenfehler erzeugt keine Meldeschleife", zustand.gemeldet === 0 && versuche === 1);
+    } finally {
+      E.empfehlenAsync = original;
+    }
+  }
+
   const bestanden = pruefungen.filter(Boolean).length;
   console.log(`${bestanden}/${pruefungen.length} bestanden`);
   process.exit(bestanden === pruefungen.length ? 0 : 1);

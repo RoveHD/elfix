@@ -195,6 +195,104 @@ assert.equal(webContentsProvider.has(erste.webContents.id), false);
     "Leertaste auf Staffelknopf bleibt dessen native Aktivierung");
   assert.match(spieler, /if \(taste === " " \|\| taste === "k"\)/,
     "Leertaste ausserhalb eines Knopfs bleibt Player-Kuerzel");
+
+  const absoluteLesen = [];
+  const absoluteStaffeln = [1, 2, 3, 4].map((staffel) => ({
+    staffel, url: `https://aniworld.to/anime/stream/test/staffel-${staffel}`
+  }));
+  const absoluteKontext = vm.createContext({
+    URL,
+    spielerLauf: null,
+    providerModel: { isHttpUrl: (url) => {
+      try { return ["http:", "https:"].includes(new URL(url).protocol); } catch { return false; }
+    } },
+    episodeIdentity: (url) => {
+      const match = String(url).match(/\/staffel-(\d+)\/episode-(\d+)/i);
+      return match ? { season: Number(match[1]), episode: Number(match[2]) } : null;
+    },
+    serienKennungAusUrl: (url) => {
+      try { return new URL(url).pathname.match(/\/anime\/stream\/([^/]+)/i)?.[1] || ""; } catch { return ""; }
+    },
+    vomSpieler: (ereignis) => ereignis?.aktiv === true,
+    folgenlisteLesen: async (_provider, url, optionen) => {
+      absoluteLesen.push({ url, still: optionen?.still });
+      return { offeneStaffel: Number(url.match(/staffel-(\d+)/)?.[1]), folgen: [] };
+    },
+    direktfolgen: { gesamtFolgenErmitteln: async (stand, jetzt, lesen, gueltig) => {
+      absoluteKontext.aufrufe.push(jetzt.season);
+      for (const staffel of stand.staffeln.filter((eintrag) => eintrag.staffel < jetzt.season)) {
+        await lesen(staffel);
+        if (!gueltig()) return stand;
+      }
+      return stand;
+    } },
+    aufrufe: []
+  });
+  vm.runInContext(funktion(main, "spielerGesamtFolgen"), absoluteKontext);
+  const ereignis = { aktiv: true };
+  const laufS1 = { url: "https://aniworld.to/anime/stream/test/staffel-1/episode-1" };
+  absoluteKontext.spielerLauf = laufS1;
+  await absoluteKontext.spielerGesamtFolgen(
+    { offeneStaffel: 4, staffeln: absoluteStaffeln }, provider, laufS1.url,
+    absoluteStaffeln[3].url, laufS1, ereignis);
+  assert.deepEqual(Array.from(absoluteKontext.aufrufe), [4],
+    "S1 laufend, aber Staffel 4 ausgewaehlt: Nummerierung nimmt die offene Liste");
+  assert.deepEqual(absoluteLesen.map((eintrag) => eintrag.still), [true, true, true],
+    "Alle Hintergrundabrufe der Vorstaffeln bleiben still");
+
+  absoluteKontext.aufrufe.length = 0;
+  absoluteLesen.length = 0;
+  const laufS4 = { url: "https://aniworld.to/anime/stream/test/staffel-4/episode-1" };
+  absoluteKontext.spielerLauf = laufS4;
+  await absoluteKontext.spielerGesamtFolgen(
+    { offeneStaffel: 2, staffeln: absoluteStaffeln.slice(0, 2) }, provider, laufS4.url,
+    absoluteStaffeln[1].url, laufS4, ereignis);
+  assert.deepEqual(Array.from(absoluteKontext.aufrufe), [2],
+    "S4 laufend, aber Staffel 2 ausgewaehlt: Nummerierung nimmt Staffel 2");
+  assert.deepEqual(absoluteLesen.map((eintrag) => eintrag.url), [absoluteStaffeln[0].url]);
+
+  absoluteKontext.aufrufe.length = 0;
+  const serienLauf = { url: "https://aniworld.to/anime/stream/test" };
+  absoluteKontext.spielerLauf = serienLauf;
+  await absoluteKontext.spielerGesamtFolgen(
+    { offeneStaffel: 4, staffeln: absoluteStaffeln }, provider, serienLauf.url,
+    absoluteStaffeln[3].url, serienLauf, ereignis);
+  assert.deepEqual(Array.from(absoluteKontext.aufrufe), [4],
+    "Eine Serienuebersicht im Player blockiert die Nummerierung der ausgewaehlten Staffel nicht");
+
+  const aufrufeVorFremd = absoluteKontext.aufrufe.length;
+  await absoluteKontext.spielerGesamtFolgen(
+    { offeneStaffel: 4, staffeln: absoluteStaffeln }, provider, serienLauf.url,
+    "https://aniworld.to/anime/stream/andere-serie/staffel-4", serienLauf, ereignis);
+  await absoluteKontext.spielerGesamtFolgen(
+    { offeneStaffel: 4, staffeln: absoluteStaffeln }, provider, serienLauf.url,
+    "https://fremd.example/anime/stream/test/staffel-4", serienLauf, ereignis);
+  assert.equal(absoluteKontext.aufrufe.length, aufrufeVorFremd,
+    "Fremde Serien und Providerhosts duerfen keine Vorstaffelabrufe ausloesen");
+
+  const laufOhneSerie = { url: "https://aniworld.to/" };
+  absoluteKontext.spielerLauf = laufOhneSerie;
+  await absoluteKontext.spielerGesamtFolgen(
+    { offeneStaffel: 4, staffeln: absoluteStaffeln }, provider, laufOhneSerie.url,
+    absoluteStaffeln[3].url, laufOhneSerie, ereignis);
+  assert.equal(absoluteKontext.aufrufe.length, aufrufeVorFremd,
+    "Eine leere Serienkennung darf keinen Zielabgleich bestehen");
+
+  absoluteKontext.spielerLauf = { url: serienLauf.url };
+  await absoluteKontext.spielerGesamtFolgen(
+    { offeneStaffel: 4, staffeln: absoluteStaffeln }, provider, serienLauf.url,
+    absoluteStaffeln[3].url, serienLauf, ereignis);
+  assert.equal(absoluteKontext.aufrufe.length, aufrufeVorFremd,
+    "Ein gewechselter Playerlauf verwirft die Hintergrundnummerierung");
+
+  absoluteKontext.spielerLauf = serienLauf;
+  ereignis.aktiv = false;
+  const vorAbbruch = absoluteLesen.length;
+  await absoluteKontext.spielerGesamtFolgen(
+    { offeneStaffel: 4, staffeln: absoluteStaffeln }, provider, serienLauf.url,
+    absoluteStaffeln[3].url, serienLauf, ereignis);
+  assert.equal(absoluteLesen.length, vorAbbruch,
+    "Ein abgebrochener Renderer startet keine stille Vorstaffelabfrage");
   console.log("OK Staffelwechsel: isolierte Werkbank, serialisiertes Cleanup und native Knopfaktivierung");
 })().catch((error) => {
   console.error(error);

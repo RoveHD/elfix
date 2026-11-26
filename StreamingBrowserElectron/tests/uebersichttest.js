@@ -303,6 +303,8 @@ const SKRIPT = seitendaten.uebersichtSkript();
     "https://www.animefillerlist.com/shows/bleach");
   pruefe("Bleach Staffel 4 wird vom Anbietertext bis zum Filler-Versatz zugeordnet",
     ergebnis.folgen.map((folge) => folge.filler?.episode).join(",") === "64,65,66");
+  pruefe("Explizite absolute Nummern bleiben unabhaengig vom Filler-Matching erhalten",
+    stand.folgen[0]?.gesamtFolge === 64 && stand.folgen[1]?.gesamtFolge === 65);
 }
 
 // S.to nutzt je nach Vorlage keine Tabellenzeile und hebt nur die Nummer

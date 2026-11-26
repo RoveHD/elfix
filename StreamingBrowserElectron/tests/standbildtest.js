@@ -25,6 +25,7 @@
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { performance } = require("node:perf_hooks");
 const WS = require("../../sync-server/node_modules/ws");
 const { WatchpartyRaeume } = require("../src/watchparty-raeume");
 const sync = require("../src/watchparty-sync");
@@ -166,7 +167,7 @@ function spielerLaden(bild, bruecke) {
   const still = { log() {}, warn() {}, error() {}, info() {} };
   const vorschau = { erstellen: () => ({ quelle() {}, zeigen: async () => ({}), verbergen() {}, zerstoeren() {} }) };
   const c = vm.createContext({
-    window: { elfixSpieler: bruecke, ElfixSpielerVorschau: vorschau, ElfixUntertitelwahl: require("../src/untertitelwahl"), addEventListener() {} }, navigator: {}, console: still, Date, Event, Promise,
+    window: { elfixSpieler: bruecke, ElfixSpielerVorschau: vorschau, ElfixUntertitelwahl: require("../src/untertitelwahl"), addEventListener() {} }, navigator: {}, console: still, Date, Event, Promise, performance,
     document: { getElementById: element, createElement: () => element(Symbol()), addEventListener() {} },
     setTimeout, clearTimeout, setInterval, clearInterval
   });
