@@ -36,8 +36,10 @@ function client(name, deviceId) {
     socket,
     offen: () => new Promise((r) => socket.on("open", r)),
     send: (m) => socket.send(JSON.stringify(m)),
-    erwarte: (passt, was, ms = 1500) => new Promise((resolve, reject) => {
-      const treffer = eingang.find(passt);
+    erwarte: (passt, was, ms = 1500, nach = null) => new Promise((resolve, reject) => {
+      const anfang = nach ? eingang.indexOf(nach) + 1 : 0;
+      if (nach && !anfang) return reject(new Error(`Bezugsnachricht fehlt: ${was} (${name})`));
+      const treffer = eingang.slice(anfang).find(passt);
       if (treffer) return resolve(treffer);
       const eintrag = { passt, resolve };
       warten.push(eintrag);
@@ -354,7 +356,12 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
   // Pause muss alle als angehalten fuehren.
   B.leeren();
   steuern(A, "pause", 42);
-  const nachPause = await B.erwarte((m) => m.type === "watchstate", "watchstate nach Pause", 1500)
+  const bestaetigtePause = await B.erwarte((m) => m.type === "control" && m.action === "pause",
+    "bestaetigte Pause an B");
+  // Der Abbruch einer offenen Startverabredung sendet vor dem Pausebefehl
+  // noch deren bisherigen Stand. Geprueft wird der erste Stand nach der
+  // bestaetigten Pause, auch wenn beide im selben Nachrichtenpaket ankamen.
+  const nachPause = await B.erwarte((m) => m.type === "watchstate", "watchstate nach Pause", 1500, bestaetigtePause)
     .catch(() => null);
   pruefe("Nach einer Pause stehen alle auf pausiert",
     Boolean(nachPause) && nachPause.members.every((m) => m.paused),
