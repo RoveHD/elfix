@@ -39,6 +39,40 @@ async function ausfuehren(text, kontext) {
   return vm.runInNewContext(text, kontext);
 }
 
+// Originale Frame-Skripte mit kontrollierter Uhr: seeked kann beim Nachladen
+// erst lange nach dem Befehl eintreffen. Keine echte Wartefrist im Test.
+function echoRahmen() {
+  const medium = media(10);
+  class Medium {}
+  Object.setPrototypeOf(medium, Medium.prototype);
+  medium.currentSrc = "https://fixture.test/folge-1.mp4";
+  let jetzt = 100000;
+  class Uhr extends Date { static now() { return jetzt; } }
+  const horcher = new Map();
+  const logs = [];
+  const kontext = {
+    ...rahmen(medium), Date: Uhr, HTMLMediaElement: Medium,
+    console: { log(zeile) { logs.push(zeile); } },
+    setInterval() { return 0; }, clearInterval() {},
+    document: {
+      querySelectorAll(wahl) { return wahl === "video" ? [medium] : []; },
+      addEventListener(name, fn) {
+        if (!horcher.has(name)) horcher.set(name, []);
+        horcher.get(name).push(fn);
+      }
+    }
+  };
+  vm.runInNewContext(sync.beobachterScript(), kontext);
+  const melden = (name, target = medium) => {
+    for (const fn of horcher.get(name) || []) fn({ target });
+  };
+  const seek = (stelle) => ausfuehren(sync.applyScript("seek", {
+    videoTime: stelle, playing: false, hatUhr: false
+  }, { genau: true }), kontext);
+  const aktionen = () => logs.filter((zeile) => /^__elfix:wp:(play|pause|seek):/.test(zeile));
+  return { medium, kontext, melden, seek, aktionen, spaeter(ms) { jetzt += ms; } };
+}
+
 (async () => {
   const pauseMedium = media(10);
   const pauseRahmen = rahmen(pauseMedium);
@@ -105,6 +139,99 @@ async function ausfuehren(text, kontext) {
   }), spaetRahmen);
   pruefe("Ein verspäteter syncstart rechnet nach der Startlinie weiter",
     spaetMedium.currentTime > 10.1, String(spaetMedium.currentTime));
+
+  for (const verzoegerung of [100, 2000, 60000]) {
+    const f = echoRahmen();
+    await f.seek(100.125);
+    const generation = f.kontext.window.__elfixWpGeneration;
+    f.spaeter(verzoegerung);
+    f.melden("seeked");
+    pruefe(`Fernsprung nach ${verzoegerung} ms bleibt ohne Benutzer-Echo`,
+      f.aktionen().length === 0 && f.kontext.window.__elfixWpGeneration === generation);
+    f.melden("seeked");
+    pruefe(`Der quittierte Merker verschluckt keinen folgenden Nutzersprung (${verzoegerung} ms)`,
+      f.aktionen().length === 1);
+  }
+
+  {
+    const f = echoRahmen();
+    f.medium.paused = false;
+    await ausfuehren(sync.applyScript("pause", { videoTime: 90, playing: false }, { genau: true }), f.kontext);
+    f.melden("pause");
+    f.spaeter(2000);
+    f.melden("seeked");
+    pruefe("Eine quittierte Pause laesst ihren langsamen Fernsprung geschuetzt", f.aktionen().length === 0);
+  }
+
+  {
+    const f = echoRahmen();
+    await f.seek(100);
+    await f.seek(200);
+    f.spaeter(2000);
+    f.melden("seeked");
+    pruefe("Ueberlappende Fernspruenge quittieren die letzte Zielstelle", f.aktionen().length === 0);
+    f.medium.currentTime = 100;
+    f.melden("seeked");
+    pruefe("Der ersetzte Fernsprung hinterlaesst keinen Merker", f.aktionen().length === 1);
+  }
+
+  {
+    const f = echoRahmen();
+    await f.seek(100);
+    f.medium.currentTime = 200;
+    f.melden("seeking");
+    f.medium.currentTime = 100;
+    f.melden("seeked");
+    pruefe("Ein eigener Zwischensprung beendet den alten Fernauftrag", f.aktionen().length === 1);
+  }
+
+  {
+    const f = echoRahmen();
+    await f.seek(100);
+    f.melden("seeking");
+    f.spaeter(2000);
+    f.medium.currentTime = 100.1;
+    f.melden("seeked");
+    pruefe("Weiterlaufende Filmzeit zwischen seeking und seeked erzeugt kein Echo", f.aktionen().length === 0);
+  }
+
+  for (const wechsel of ["loadstart", "emptied", "quelle", "runde", "video"]) {
+    const f = echoRahmen();
+    await f.seek(100);
+    let target = f.medium;
+    if (wechsel === "quelle") f.medium.currentSrc = "https://fixture.test/folge-2.mp4";
+    else if (wechsel === "runde") await ausfuehren(sync.zuruecksetzenScript(), f.kontext);
+    else if (wechsel === "video") {
+      target = media(100);
+      Object.setPrototypeOf(target, Object.getPrototypeOf(f.medium));
+      target.currentSrc = f.medium.currentSrc;
+    } else f.melden(wechsel);
+    f.spaeter(2000);
+    f.melden("seeked", target);
+    pruefe(`Ein Wechsel von ${wechsel} beendet den fremden Seek-Merker`, f.aktionen().length === 1);
+  }
+
+  for (const wechsel of ["loadstart", "emptied"]) {
+    const f = echoRahmen();
+    f.medium.readyState = 1;
+    const alterAuftrag = f.seek(100);
+    f.melden(wechsel);
+    f.medium.readyState = 4;
+    const ergebnis = await alterAuftrag;
+    pruefe(`Ein ${wechsel} bricht auch den noch wartenden Fernauftrag ab`,
+      ergebnis === "abgebrochen" && !f.kontext.window.__elfixWpSpruenge.has(f.medium));
+  }
+
+  {
+    const f = echoRahmen();
+    f.medium.paused = false;
+    f.kontext.window.__elfixWpSync = { bestaetigt: 2, seitSprung: 0, letzteMessung: 0, gemeldet: 0 };
+    await ausfuehren(sync.driftScript({ videoTime: 100, playing: true, hatUhr: false }), f.kontext);
+    f.spaeter(2000);
+    f.melden("seeked");
+    pruefe("Auch eine langsame Driftkorrektur geht nicht als Nutzersprung zurueck",
+      f.medium.currentTime === 100 && f.aktionen().length === 0);
+  }
 
   const fehler = pruefungen.filter((wert) => !wert).length;
   console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);

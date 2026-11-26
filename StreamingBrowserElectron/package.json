@@ -26,6 +26,7 @@
     "suite": "node tests/run.js",
     "test:watchparty-recovery": "npm run pretest && node tests/watchparty-recovery-electrontest.js",
     "test:watchparty-three-pc": "npm run pretest && node tests/watchparty-drei-pc-electrontest.js",
+    "test:uninstaller": "node tests/uninstallertest.js",
     "test:android-verifizierung": "electron tests/android-verifizierung-electrontest.js",
     "build:rtx": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/rtx-video-build.ps1",
     "test:voice": "node --check shared/sprachchat.js && node --check shared/sprachchat-ui.js && node --check src/sprachchat-fenster.js && node --check src/sprachchat-preload.js && node tests/sprachchattest.js && node tests/sprachchatrelaytest.js && electron tests/sprachchat-electrontest.js"
@@ -59,6 +60,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "ELFIX",
+      "include": "build/uninstaller.nsh",
       "deleteAppDataOnUninstall": false
     },
     "portable": {

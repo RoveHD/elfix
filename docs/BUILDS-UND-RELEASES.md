@@ -15,6 +15,33 @@ ELFIX-Setup-<version>-x64.exe        der Installer
 ELFIX-Portable-<version>-x64.exe     die portable Variante
 ```
 
+### Windows deinstallieren
+
+Der Windows-Deinstaller bietet zwei Möglichkeiten: nur **Programmdateien
+entfernen** (Voreinstellung) oder zusätzlich **alle lokalen Benutzerdaten
+löschen**. Für die zweite Möglichkeit wird das zusätzliche Häkchen gesetzt.
+Sie entfernt Einstellungen, Watchlist, Wiedergabefortschritt, Anmeldungen,
+Browserdaten, heruntergeladene Sprachmodelle, Caches und interne Sicherungen
+aus `%APPDATA%\ELFIX`, außerdem das frühere Profil
+`%APPDATA%\GlobalSearchHub` und `%LOCALAPPDATA%\elfix-updater`.
+Extern gespeicherte Exporte, heruntergeladene Videos und Daten auf anderen
+Geräten bzw. dem Sync-Server werden nicht gelöscht.
+
+Abbrechen vor dem Start entfernt nichts. Updates, `/KEEP_APP_DATA` und stille
+Deinstallationen (`/S`) behalten die Benutzerdaten immer. Der ältere Parameter
+`--delete-app-data` wird abgewiesen, damit er diese Auswahl nicht umgeht.
+Die Installation selbst bleibt unverändert im Ein-Klick-Modus. Die neue
+Auswahl steht erst nach Installation eines damit gebauten Setups zur Verfügung;
+bereits installierte Deinstaller werden durch eine Änderung am App-Code nicht
+ersetzt.
+
+Prüfung unter Windows: `npm run test:uninstaller -- --build` kompiliert und
+führt den echten Bereinigungscode ausschließlich mit isolierten Testordnern aus
+(einschließlich Updates, Abbrechen, gesperrten Dateien und Ordnerverknüpfungen).
+Zusätzlich wird der vollständige NSIS-Installer mit einer Dummy-Anwendung gebaut,
+aber nicht installiert. Diese Test-Setups unter `tools/uninstaller-test-*` sind
+keine verwendbaren ELFIX-Releases.
+
 ## Android bauen
 
 ```powershell
